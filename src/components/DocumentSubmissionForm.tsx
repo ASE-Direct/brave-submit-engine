@@ -106,7 +106,7 @@ export function DocumentSubmissionForm() {
             </svg>
           ))}
         </div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-secondary">Document Submission</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-secondary">BAV Savings Challenge</h1>
         <p className="text-sm sm:text-base text-muted-foreground">Upload your document and we'll process it for you</p>
       </div>
 
