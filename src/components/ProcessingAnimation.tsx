@@ -8,38 +8,43 @@ const STEPS = [
     title: "Processing and Parsing Document",
     description: "Using OCR to extract data from your document",
     icon: FileText,
-    duration: 15000,
+    duration: 5000,
   },
   {
     id: 2,
     title: "Cross-Referencing SKUs",
     description: "Using AI to match products with BAV vendors",
     icon: Search,
-    duration: 15000,
+    duration: 5000,
   },
   {
     id: 3,
     title: "Optimizing Order Quantities",
     description: "Adjusting yield quantities for optimal efficiency",
     icon: Settings,
-    duration: 15000,
+    duration: 5000,
   },
   {
     id: 4,
     title: "Generating Final Report",
     description: "Compiling your optimized order report",
     icon: FileCheck,
-    duration: 15000,
+    duration: 5000,
   },
 ];
 
-export function ProcessingAnimation() {
+export function ProcessingAnimation({ onComplete }: { onComplete?: () => void }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [stepProgress, setStepProgress] = useState(0);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
 
   useEffect(() => {
-    if (currentStep >= STEPS.length) return;
+    if (currentStep >= STEPS.length) {
+      if (onComplete) {
+        onComplete();
+      }
+      return;
+    }
 
     const stepDuration = STEPS[currentStep].duration;
     const interval = 100;
@@ -57,7 +62,7 @@ export function ProcessingAnimation() {
     }, interval);
 
     return () => clearInterval(timer);
-  }, [currentStep]);
+  }, [currentStep, onComplete]);
 
   const overallProgress = ((currentStep + stepProgress / 100) / STEPS.length) * 100;
 

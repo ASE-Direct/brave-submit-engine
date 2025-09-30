@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FileUpload } from "@/components/FileUpload";
 import { ProcessingAnimation } from "@/components/ProcessingAnimation";
+import { ResultsPage } from "@/components/ResultsPage";
 import { useToast } from "@/hooks/use-toast";
 
 const formSchema = z.object({
@@ -26,6 +27,7 @@ export function DocumentSubmissionForm() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showResults, setShowResults] = useState(false);
   const { toast } = useToast();
 
   const form = useForm<FormData>({
@@ -80,8 +82,12 @@ export function DocumentSubmissionForm() {
     setIsProcessing(true);
   };
 
+  if (showResults) {
+    return <ResultsPage />;
+  }
+
   if (isProcessing) {
-    return <ProcessingAnimation />;
+    return <ProcessingAnimation onComplete={() => setShowResults(true)} />;
   }
 
   return (
