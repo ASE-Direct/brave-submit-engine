@@ -109,43 +109,43 @@ export function ResultsPage() {
 
         {/* Results Section */}
         <div className="space-y-4">
-          <Card className="bg-card border-2 border-primary/20">
+          <Card className="bg-card border-2 border-blue-500/20">
             <CardContent className="pt-6">
               <div className="flex items-start gap-3 sm:gap-4">
-                <div className="p-2 sm:p-3 bg-primary/10 rounded-lg">
-                  <DollarSign className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
+                <div className="p-2 sm:p-3 bg-blue-500/10 rounded-lg">
+                  <DollarSign className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs sm:text-sm text-muted-foreground">Total Cost Savings</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-secondary">$30,000</p>
+                  <p className="text-2xl sm:text-3xl font-bold text-blue-600">$30,000</p>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-card border-2 border-primary/20">
+          <Card className="bg-card border-2 border-amber-600/20">
             <CardContent className="pt-6">
               <div className="flex items-start gap-3 sm:gap-4">
-                <div className="p-2 sm:p-3 bg-primary/10 rounded-lg">
-                  <Package className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
+                <div className="p-2 sm:p-3 bg-amber-600/10 rounded-lg">
+                  <Package className="w-6 h-6 sm:w-8 sm:h-8 text-amber-700" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs sm:text-sm text-muted-foreground">Number of Cartridges Saved</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-secondary">400</p>
+                  <p className="text-2xl sm:text-3xl font-bold text-amber-700">400</p>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-card border-2 border-primary/20">
+          <Card className="bg-card border-2 border-green-600/20">
             <CardContent className="pt-6">
               <div className="flex items-start gap-3 sm:gap-4">
-                <div className="p-2 sm:p-3 bg-primary/10 rounded-lg">
-                  <Leaf className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
+                <div className="p-2 sm:p-3 bg-green-600/10 rounded-lg">
+                  <Leaf className="w-6 h-6 sm:w-8 sm:h-8 text-green-600" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs sm:text-sm text-muted-foreground">Pounds of CO₂ Reduced</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-secondary">1,000</p>
+                  <p className="text-2xl sm:text-3xl font-bold text-green-600">1,000</p>
                 </div>
               </div>
             </CardContent>
