@@ -80,8 +80,9 @@ export function ResultsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="aspect-[8.5/11] bg-muted rounded-lg border-2 border-border overflow-hidden max-w-md mx-auto">
-              <iframe
-                src="/BMO_Savings_Kit.pdf"
+              <embed
+                src="/BMO_Savings_Kit.pdf#view=FitH"
+                type="application/pdf"
                 className="w-full h-full"
                 title="PDF Preview"
               />
