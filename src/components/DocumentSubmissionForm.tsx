@@ -18,7 +18,8 @@ const formSchema = z.object({
   email: z.string().min(1, "Email is required").email("Please enter a valid email address").max(255),
   phone: z.string()
     .min(1, "Phone number is required")
-    .regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
+    .transform((val) => val.replace(/\D/g, ''))
+    .refine((val) => val.length === 10, "Phone number must be exactly 10 digits"),
 });
 
 type FormData = z.infer<typeof formSchema>;
@@ -178,7 +179,26 @@ export function DocumentSubmissionForm() {
               <FormItem>
                 <FormLabel>Phone Number *</FormLabel>
                 <FormControl>
-                  <Input type="tel" {...field} />
+                  <Input 
+                    type="tel" 
+                    {...field}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '');
+                      let formatted = value;
+                      
+                      if (value.length >= 3) {
+                        formatted = `(${value.slice(0, 3)})`;
+                        if (value.length > 3) {
+                          formatted += ` ${value.slice(3, 6)}`;
+                          if (value.length > 6) {
+                            formatted += `-${value.slice(6, 10)}`;
+                          }
+                        }
+                      }
+                      
+                      field.onChange(formatted);
+                    }}
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
