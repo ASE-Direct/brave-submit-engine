@@ -15,8 +15,10 @@ const formSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100),
   lastName: z.string().min(1, "Last name is required").max(100),
   company: z.string().min(1, "Company is required").max(200),
-  email: z.string().email("Invalid email address").max(255),
-  phone: z.string().min(1, "Phone number is required").max(20),
+  email: z.string().min(1, "Email is required").email("Please enter a valid email address").max(255),
+  phone: z.string()
+    .min(1, "Phone number is required")
+    .regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
 });
 
 type FormData = z.infer<typeof formSchema>;
@@ -118,7 +120,7 @@ export function DocumentSubmissionForm() {
                 <FormItem>
                   <FormLabel>First Name *</FormLabel>
                   <FormControl>
-                    <Input placeholder="John" {...field} />
+                    <Input {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -132,7 +134,7 @@ export function DocumentSubmissionForm() {
                 <FormItem>
                   <FormLabel>Last Name *</FormLabel>
                   <FormControl>
-                    <Input placeholder="Doe" {...field} />
+                    <Input {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -147,7 +149,7 @@ export function DocumentSubmissionForm() {
               <FormItem>
                 <FormLabel>Company *</FormLabel>
                 <FormControl>
-                  <Input placeholder="Acme Inc." {...field} />
+                  <Input {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -161,7 +163,7 @@ export function DocumentSubmissionForm() {
               <FormItem>
                 <FormLabel>Email Address *</FormLabel>
                 <FormControl>
-                  <Input type="email" placeholder="john@example.com" {...field} />
+                  <Input type="email" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -175,7 +177,7 @@ export function DocumentSubmissionForm() {
               <FormItem>
                 <FormLabel>Phone Number *</FormLabel>
                 <FormControl>
-                  <Input type="tel" placeholder="(555) 123-4567" {...field} />
+                  <Input type="tel" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
