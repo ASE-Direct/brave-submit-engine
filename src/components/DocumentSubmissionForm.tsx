@@ -34,6 +34,7 @@ export function DocumentSubmissionForm() {
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
+    mode: "onChange",
     defaultValues: {
       firstName: "",
       lastName: "",
