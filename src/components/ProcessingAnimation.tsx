@@ -67,21 +67,21 @@ export function ProcessingAnimation({ onComplete }: { onComplete?: () => void })
   const overallProgress = ((currentStep + stepProgress / 100) / STEPS.length) * 100;
 
   return (
-    <div className="w-full max-w-2xl mx-auto p-6 space-y-8 bg-card rounded-lg shadow-lg">
+    <div className="w-full max-w-2xl mx-auto p-4 sm:p-6 space-y-8 bg-card rounded-lg shadow-lg">
       <div className="text-center space-y-2">
         <div className="flex justify-center gap-1 mb-2">
           {[...Array(5)].map((_, i) => (
             <svg
               key={i}
-              className="w-6 h-6 fill-primary"
+              className="w-4 h-4 sm:w-6 sm:h-6 fill-primary"
               viewBox="0 0 24 24"
             >
               <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
             </svg>
           ))}
         </div>
-        <h1 className="text-3xl font-bold text-secondary">Processing Your Document</h1>
-        <p className="text-muted-foreground">Please wait while we optimize your order</p>
+        <h1 className="text-2xl sm:text-3xl font-bold text-secondary">Processing Your Document</h1>
+        <p className="text-sm sm:text-base text-muted-foreground">Please wait while we optimize your order</p>
       </div>
 
       <div className="space-y-2">
@@ -111,10 +111,10 @@ export function ProcessingAnimation({ onComplete }: { onComplete?: () => void })
             >
               <div className="flex-shrink-0">
                 {isCompleted ? (
-                  <CheckCircle className="w-8 h-8 text-primary" />
+                  <CheckCircle className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
                 ) : (
                   <Icon
-                    className={`w-8 h-8 ${isCurrent ? "text-primary animate-pulse" : "text-muted-foreground"}`}
+                    className={`w-6 h-6 sm:w-8 sm:h-8 ${isCurrent ? "text-primary animate-pulse" : "text-muted-foreground"}`}
                   />
                 )}
               </div>

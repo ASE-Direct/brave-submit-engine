@@ -43,7 +43,7 @@ export function FileUpload({ onFileSelect, isUploading, uploadProgress, selected
       <div
         {...getRootProps()}
         className={`
-          border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
+          border-2 border-dashed rounded-lg p-4 sm:p-8 text-center cursor-pointer transition-colors
           ${isDragActive ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}
           ${selectedFile && !isUploading ? "bg-muted" : ""}
         `}
@@ -52,8 +52,8 @@ export function FileUpload({ onFileSelect, isUploading, uploadProgress, selected
         
         {!selectedFile && !isUploading && (
           <div className="space-y-2">
-            <Upload className="w-12 h-12 mx-auto text-muted-foreground" />
-            <p className="text-sm font-medium">
+            <Upload className="w-8 h-8 sm:w-12 sm:h-12 mx-auto text-muted-foreground" />
+            <p className="text-xs sm:text-sm font-medium">
               {isDragActive ? "Drop the file here" : "Drag & drop your file here"}
             </p>
             <p className="text-xs text-muted-foreground">or click to browse</p>
