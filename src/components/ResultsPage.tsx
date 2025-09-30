@@ -40,14 +40,14 @@ export function ResultsPage() {
 
   const handleViewPDF = () => {
     // Open PDF in new tab
-    window.open("/sample-report.pdf", "_blank");
+    window.open("/BMO_Savings_Kit.pdf", "_blank");
   };
 
   const handleDownloadPDF = () => {
     // Trigger PDF download
     const link = document.createElement("a");
-    link.href = "/sample-report.pdf";
-    link.download = "optimized-report.pdf";
+    link.href = "/BMO_Savings_Kit.pdf";
+    link.download = "BMO_Savings_Kit.pdf";
     link.click();
   };
 
@@ -79,11 +79,12 @@ export function ResultsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="aspect-[8.5/11] bg-muted rounded-lg border-2 border-border flex items-center justify-center max-w-md mx-auto">
-              <div className="text-center space-y-2">
-                <FileText className="w-12 h-12 sm:w-16 sm:h-16 mx-auto text-muted-foreground" />
-                <p className="text-xs sm:text-sm text-muted-foreground">PDF Preview</p>
-              </div>
+            <div className="aspect-[8.5/11] bg-muted rounded-lg border-2 border-border overflow-hidden max-w-md mx-auto">
+              <iframe
+                src="/BMO_Savings_Kit.pdf"
+                className="w-full h-full"
+                title="PDF Preview"
+              />
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
               <Button
