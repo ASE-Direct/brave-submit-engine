@@ -69,7 +69,7 @@ export function ResultsPage() {
         <p className="text-sm sm:text-base text-muted-foreground">Your optimized report is ready</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.5fr] gap-6">
         {/* PDF Preview Section */}
         <Card className="bg-card">
           <CardHeader>
@@ -79,10 +79,10 @@ export function ResultsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="aspect-[8.5/11] bg-muted rounded-lg border-2 border-border flex items-center justify-center">
+            <div className="aspect-[8.5/11] bg-muted rounded-lg border-2 border-border flex items-center justify-center max-w-md mx-auto">
               <div className="text-center space-y-2">
-                <FileText className="w-16 h-16 mx-auto text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">PDF Preview</p>
+                <FileText className="w-12 h-12 sm:w-16 sm:h-16 mx-auto text-muted-foreground" />
+                <p className="text-xs sm:text-sm text-muted-foreground">PDF Preview</p>
               </div>
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
