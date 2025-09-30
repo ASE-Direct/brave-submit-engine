@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Document Submission Form - Embed Example</title>
+  <title>BAV Savings Challenge - Embed Example</title>
   <style>
     body {
       margin: 0;
@@ -13,7 +13,7 @@
     }
     
     .container {
-      max-width: 1200px;
+      max-width: 1400px;
       margin: 0 auto;
     }
     
@@ -32,7 +32,7 @@
     
     iframe {
       width: 100%;
-      min-height: 900px;
+      min-height: 1000px;
       border: none;
       display: block;
     }
@@ -67,28 +67,39 @@
 </head>
 <body>
   <div class="container">
-    <h1>Document Submission Form</h1>
+    <h1>BAV Savings Challenge - Live Demo</h1>
     
     <div class="iframe-container">
       <iframe 
         src="/" 
-        title="Document Submission Form"
+        title="BAV Savings Challenge"
         allow="clipboard-write"
       ></iframe>
     </div>
     
     <div class="instructions">
-      <h2>Embed Instructions</h2>
-      <p>To embed this form on your website, use the following code:</p>
+      <h2>How to Embed This on Your Website</h2>
+      <p>To embed the BAV Savings Challenge tool on your website, simply copy and paste this code:</p>
       <pre><code>&lt;iframe 
-  src="https://your-domain.com/" 
+  src="https://your-deployed-url.lovable.app/" 
   width="100%" 
-  height="900px"
+  height="1000px"
   style="border: none; border-radius: 8px;"
-  title="Document Submission Form"
+  title="BAV Savings Challenge"
   allow="clipboard-write"
 &gt;&lt;/iframe&gt;</code></pre>
-      <p><strong>Note:</strong> Replace <code>https://your-domain.com/</code> with your actual deployed URL.</p>
+      <p><strong>Important:</strong> Replace <code>https://your-deployed-url.lovable.app/</code> with your actual published URL from Lovable.</p>
+      
+      <h3>Responsive Embed (Recommended)</h3>
+      <p>For a responsive embed that adapts to different screen sizes:</p>
+      <pre><code>&lt;div style="position: relative; padding-bottom: 100%; height: 0; overflow: hidden; max-width: 100%;"&gt;
+  &lt;iframe 
+    src="https://your-deployed-url.lovable.app/" 
+    style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none;"
+    title="BAV Savings Challenge"
+    allow="clipboard-write"
+  &gt;&lt;/iframe&gt;
+&lt;/div&gt;</code></pre>
     </div>
   </div>
 </body>
