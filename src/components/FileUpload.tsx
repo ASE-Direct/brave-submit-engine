@@ -43,8 +43,7 @@ export function FileUpload({
       
       <div {...getRootProps()} className={`
           border-2 border-dashed rounded-lg p-4 sm:p-8 text-center cursor-pointer transition-colors
-          ${isDragActive ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}
-          ${selectedFile && !isUploading ? "bg-muted" : ""}
+          ${selectedFile && !isUploading ? "bg-muted !border-green-500" : isDragActive ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}
         `}>
         <input {...getInputProps()} />
         
@@ -65,8 +64,8 @@ export function FileUpload({
           </div>}
 
         {selectedFile && !isUploading && <div className="space-y-2">
-            <CheckCircle className="w-12 h-12 mx-auto text-primary" />
-            <p className="text-sm font-medium text-primary">File uploaded successfully!</p>
+            <CheckCircle className="w-12 h-12 mx-auto text-green-500" />
+            <p className="text-sm font-medium text-green-600">File uploaded successfully!</p>
             <p className="text-xs text-muted-foreground">{selectedFile.name}</p>
             <p className="text-xs text-muted-foreground">
               ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)

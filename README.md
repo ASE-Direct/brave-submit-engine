@@ -36,6 +36,18 @@ npm i
 npm run dev
 ```
 
+## reCAPTCHA Setup
+
+This application includes Google reCAPTCHA v2 for human verification. The default test keys are configured and will work immediately for development.
+
+For production deployment, you'll need to:
+1. Get your own reCAPTCHA keys from [Google reCAPTCHA Admin](https://www.google.com/recaptcha/admin/create)
+2. Configure your keys (see [RECAPTCHA_SETUP.md](./RECAPTCHA_SETUP.md) for detailed instructions)
+3. Implement backend verification for security
+
+See the complete setup guide: [RECAPTCHA_SETUP.md](./RECAPTCHA_SETUP.md)
+```
+
 **Edit a file directly in GitHub**
 
 - Navigate to the desired file(s).

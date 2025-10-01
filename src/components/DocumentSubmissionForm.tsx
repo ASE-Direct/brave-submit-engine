@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -10,6 +10,7 @@ import { FileUpload } from "@/components/FileUpload";
 import { ProcessingAnimation } from "@/components/ProcessingAnimation";
 import { ResultsPage } from "@/components/ResultsPage";
 import { useToast } from "@/hooks/use-toast";
+import { getRecaptchaSiteKey } from "@/config/recaptcha";
 
 const formSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100),
@@ -32,6 +33,7 @@ export function DocumentSubmissionForm() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const { toast } = useToast();
+  const recaptchaRef = useRef<ReCAPTCHA>(null);
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -76,14 +78,66 @@ export function DocumentSubmissionForm() {
     if (!captchaToken) {
       toast({
         title: "Error",
-        description: "Please complete the reCAPTCHA",
+        description: "Please complete the reCAPTCHA verification",
         variant: "destructive",
       });
       return;
     }
 
-    console.log("Form submitted:", { ...data, file: file.name, captchaToken });
-    setIsProcessing(true);
+    try {
+      // TODO: Send captchaToken to your backend for verification
+      // Example API call:
+      // const response = await fetch('/api/submit', {
+      //   method: 'POST',
+      //   headers: { 'Content-Type': 'application/json' },
+      //   body: JSON.stringify({ ...data, captchaToken, fileName: file.name })
+      // });
+      
+      console.log("Form submitted:", { ...data, file: file.name, captchaToken });
+      
+      // Show success message
+      toast({
+        title: "Success",
+        description: "Your document has been submitted successfully",
+      });
+      
+      setIsProcessing(true);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to submit form. Please try again.",
+        variant: "destructive",
+      });
+      
+      // Reset reCAPTCHA on error
+      recaptchaRef.current?.reset();
+      setCaptchaToken(null);
+    }
+  };
+
+  const handleCaptchaChange = (token: string | null) => {
+    setCaptchaToken(token);
+    if (token) {
+      console.log("reCAPTCHA verified:", token);
+    }
+  };
+
+  const handleCaptchaExpired = () => {
+    setCaptchaToken(null);
+    toast({
+      title: "reCAPTCHA Expired",
+      description: "Please verify again",
+      variant: "destructive",
+    });
+  };
+
+  const handleCaptchaError = () => {
+    setCaptchaToken(null);
+    toast({
+      title: "reCAPTCHA Error",
+      description: "Failed to load reCAPTCHA. Please refresh the page.",
+      variant: "destructive",
+    });
   };
 
   if (showResults) {
@@ -212,11 +266,18 @@ export function DocumentSubmissionForm() {
             selectedFile={file}
           />
 
-          <div className="flex justify-center">
+          <div className="flex flex-col items-center gap-2">
             <ReCAPTCHA
-              sitekey="6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"
-              onChange={(token) => setCaptchaToken(token)}
+              ref={recaptchaRef}
+              sitekey={getRecaptchaSiteKey()}
+              onChange={handleCaptchaChange}
+              onExpired={handleCaptchaExpired}
+              onErrored={handleCaptchaError}
+              theme="light"
             />
+            <p className="text-xs text-muted-foreground text-center">
+              This site is protected by reCAPTCHA
+            </p>
           </div>
 
           <Button
