@@ -70,45 +70,8 @@ export function ResultsPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.5fr] gap-6">
-        {/* PDF Preview Section */}
-        <Card className="bg-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FileText className="w-5 h-5" />
-              Report Preview
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="aspect-[8.5/11] bg-muted rounded-lg border-2 border-border overflow-hidden max-w-md mx-auto">
-              <embed
-                src="/BMO_Savings_Kit.pdf#view=FitH"
-                type="application/pdf"
-                className="w-full h-full"
-                title="PDF Preview"
-              />
-            </div>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <Button
-                onClick={handleViewPDF}
-                className="flex-1 bg-primary hover:bg-primary/90"
-              >
-                <ExternalLink className="w-4 h-4 mr-2" />
-                View
-              </Button>
-              <Button
-                onClick={handleDownloadPDF}
-                variant="outline"
-                className="flex-1"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Download
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Results Section */}
-        <div className="space-y-4">
+        {/* Results Section - appears first on mobile, second on desktop */}
+        <div className="space-y-4 lg:order-2">
           <Card className="bg-card border-2 border-blue-500/20">
             <CardContent className="pt-6">
               <div className="flex items-start gap-3 sm:gap-4">
@@ -166,6 +129,43 @@ export function ResultsPage() {
             </Button>
           </div>
         </div>
+
+        {/* PDF Preview Section - appears second on mobile, first on desktop */}
+        <Card className="bg-card lg:order-1">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              Report Preview
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="aspect-[8.5/11] bg-muted rounded-lg border-2 border-border overflow-hidden max-w-md mx-auto">
+              <embed
+                src="/BMO_Savings_Kit.pdf#view=FitH"
+                type="application/pdf"
+                className="w-full h-full"
+                title="PDF Preview"
+              />
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button
+                onClick={handleViewPDF}
+                className="flex-1 bg-primary hover:bg-primary/90"
+              >
+                <ExternalLink className="w-4 h-4 mr-2" />
+                View
+              </Button>
+              <Button
+                onClick={handleDownloadPDF}
+                variant="outline"
+                className="flex-1"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Download
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
