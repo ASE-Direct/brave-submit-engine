@@ -104,14 +104,14 @@ export function ProcessingAnimation({ onComplete }: { onComplete?: () => void })
               key={step.id}
               className={`
                 flex items-start gap-4 p-4 rounded-lg border-2 transition-all duration-300
-                ${isCompleted ? "border-primary bg-primary/5" : ""}
+                ${isCompleted ? "border-green-500 bg-green-50" : ""}
                 ${isCurrent ? "border-primary bg-primary/10 shadow-md" : ""}
                 ${isPending ? "border-border opacity-50" : ""}
               `}
             >
               <div className="flex-shrink-0">
                 {isCompleted ? (
-                  <CheckCircle className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
+                  <CheckCircle className="w-6 h-6 sm:w-8 sm:h-8 text-green-500" />
                 ) : (
                   <Icon
                     className={`w-6 h-6 sm:w-8 sm:h-8 ${isCurrent ? "text-primary animate-pulse" : "text-muted-foreground"}`}

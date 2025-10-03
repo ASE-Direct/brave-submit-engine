@@ -30,6 +30,7 @@ export async function submitDocument(data: SubmissionData): Promise<SubmissionRe
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseAnonKey}`,
         'apikey': supabaseAnonKey,
       },
       body: JSON.stringify(data),
