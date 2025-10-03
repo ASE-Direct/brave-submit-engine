@@ -97,7 +97,7 @@ export function DocumentSubmissionForm() {
         fileSize: file.size,
         fileType: file.type,
         captchaToken: captchaToken,
-      });
+      }, file);
 
       console.log("Submission successful:", result);
       

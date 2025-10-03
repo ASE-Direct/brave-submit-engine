@@ -13,19 +13,42 @@ export interface SubmissionData {
   fileSize: number;
   fileType: string;
   captchaToken: string;
+  fileData: string; // Base64 encoded file
 }
 
 export interface SubmissionResponse {
   success: boolean;
   message: string;
   submissionId?: string;
+  fileUrl?: string;
   error?: string;
   details?: string;
 }
 
+// Convert file to base64
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Remove the data URL prefix (e.g., "data:application/pdf;base64,")
+      const base64 = result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = (error) => reject(error);
+  });
+}
+
 // Submit document to Supabase Edge Function
-export async function submitDocument(data: SubmissionData): Promise<SubmissionResponse> {
+export async function submitDocument(
+  data: Omit<SubmissionData, 'fileData'>,
+  file: File
+): Promise<SubmissionResponse> {
   try {
+    // Convert file to base64
+    const fileData = await fileToBase64(file);
+
     const response = await fetch(`${supabaseUrl}/functions/v1/submit-document`, {
       method: 'POST',
       headers: {
@@ -33,7 +56,10 @@ export async function submitDocument(data: SubmissionData): Promise<SubmissionRe
         'Authorization': `Bearer ${supabaseAnonKey}`,
         'apikey': supabaseAnonKey,
       },
-      body: JSON.stringify(data),
+      body: JSON.stringify({
+        ...data,
+        fileData,
+      }),
     });
 
     const result = await response.json();
