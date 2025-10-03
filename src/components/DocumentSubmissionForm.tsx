@@ -11,6 +11,7 @@ import { ProcessingAnimation } from "@/components/ProcessingAnimation";
 import { ResultsPage } from "@/components/ResultsPage";
 import { useToast } from "@/hooks/use-toast";
 import { getRecaptchaSiteKey } from "@/config/recaptcha";
+import { submitDocument } from "@/lib/supabase";
 
 const formSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100),
@@ -85,27 +86,33 @@ export function DocumentSubmissionForm() {
     }
 
     try {
-      // TODO: Send captchaToken to your backend for verification
-      // Example API call:
-      // const response = await fetch('/api/submit', {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify({ ...data, captchaToken, fileName: file.name })
-      // });
-      
-      console.log("Form submitted:", { ...data, file: file.name, captchaToken });
+      // Submit to Supabase Edge Function
+      const result = await submitDocument({
+        firstName: data.firstName,
+        lastName: data.lastName,
+        company: data.company,
+        email: data.email,
+        phone: data.phone,
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        captchaToken: captchaToken,
+      });
+
+      console.log("Submission successful:", result);
       
       // Show success message
       toast({
-        title: "Success",
+        title: "Success!",
         description: "Your document has been submitted successfully",
       });
       
       setIsProcessing(true);
     } catch (error) {
+      console.error("Submission error:", error);
       toast({
-        title: "Error",
-        description: "Failed to submit form. Please try again.",
+        title: "Submission Failed",
+        description: error instanceof Error ? error.message : "Failed to submit form. Please try again.",
         variant: "destructive",
       });
       
