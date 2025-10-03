@@ -17,27 +17,6 @@ You need to set these secrets in your Supabase dashboard:
 
 2. Add the following secrets:
 
-```bash
-RECAPTCHA_SECRET_KEY=6Lc0jtorAAAAAASVQpsNEdsmzYdVfgh1x7yC5wqY
-SUPABASE_URL=https://qpiijzpslfjwikigrbol.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwaWlqenBzbGZqd2lraWdyYm9sIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTQ1MzAzMiwiZXhwIjoyMDc1MDI5MDMyfQ.DZntQC0AE3RR9qgnbWhlA6d9naz0L2y63y1w0rSkvDU
-```
-
-**OR** use the Supabase CLI:
-
-```bash
-# Install Supabase CLI if you haven't
-npm install -g supabase
-
-# Link to your project
-supabase link --project-ref qpiijzpslfjwikigrbol
-
-# Set secrets
-supabase secrets set RECAPTCHA_SECRET_KEY=6Lc0jtorAAAAAASVQpsNEdsmzYdVfgh1x7yC5wqY
-supabase secrets set SUPABASE_URL=https://qpiijzpslfjwikigrbol.supabase.co
-supabase secrets set SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwaWlqenBzbGZqd2lraWdyYm9sIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTQ1MzAzMiwiZXhwIjoyMDc1MDI5MDMyfQ.DZntQC0AE3RR9qgnbWhlA6d9naz0L2y63y1w0rSkvDU
-```
-
 ## 📊 Database Schema
 
 ### `document_submissions` Table

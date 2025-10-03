@@ -43,12 +43,6 @@ Add all domains where the iframe will be embedded:
 
 Make sure these are set in your Supabase project:
 
-```bash
-supabase secrets set RECAPTCHA_SECRET_KEY=6Lc0jtorAAAAAASVQpsNEdsmzYdVfgh1x7yC5wqY
-supabase secrets set SUPABASE_URL=https://qpiijzpslfjwikigrbol.supabase.co
-supabase secrets set SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-```
-
 ## 🌐 Responsive Embedding
 
 ### Basic Responsive

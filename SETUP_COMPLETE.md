@@ -40,20 +40,6 @@ You **must** set these environment variables in Supabase:
 2. Click "Manage secrets"
 3. Add these three secrets:
 
-```
-RECAPTCHA_SECRET_KEY=6Lc0jtorAAAAAASVQpsNEdsmzYdVfgh1x7yC5wqY
-SUPABASE_URL=https://qpiijzpslfjwikigrbol.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwaWlqenBzbGZqd2lraWdyYm9sIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTQ1MzAzMiwiZXhwIjoyMDc1MDI5MDMyfQ.DZntQC0AE3RR9qgnbWhlA6d9naz0L2y63y1w0rSkvDU
-```
-
-**Option B: Via Supabase CLI**
-```bash
-npm install -g supabase
-supabase link --project-ref qpiijzpslfjwikigrbol
-supabase secrets set RECAPTCHA_SECRET_KEY=6Lc0jtorAAAAAASVQpsNEdsmzYdVfgh1x7yC5wqY
-supabase secrets set SUPABASE_URL=https://qpiijzpslfjwikigrbol.supabase.co
-supabase secrets set SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwaWlqenBzbGZqd2lraWdyYm9sIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTQ1MzAzMiwiZXhwIjoyMDc1MDI5MDMyfQ.DZntQC0AE3RR9qgnbWhlA6d9naz0L2y63y1w0rSkvDU
-```
 
 ### Step 2: Test Locally
 
