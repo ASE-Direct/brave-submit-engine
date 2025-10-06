@@ -416,14 +416,56 @@ ORDER BY oie.cost_savings DESC NULLS LAST;
 
 ---
 
+## 🎯 Product Matching Intelligence
+
+The system uses a **4-tier intelligent matching strategy** to achieve high accuracy across various document formats:
+
+### Tier 1: Multi-SKU Exact Matching
+- Attempts exact match on **all available SKU columns** (Staples SKU, OEM Number, Part Number, etc.)
+- Case-insensitive matching with normalization
+- **Score: 1.0** (100% confidence)
+
+### Tier 2: Fuzzy SKU Matching
+- Handles variations: spaces, dashes, underscores, case differences
+- Example: "W2021A", "W-2021-A", "w2021a" all match
+- **Score: 0.85-0.95** (85-95% confidence)
+
+### Tier 3: Full-Text Search
+- PostgreSQL full-text search with term ranking
+- Extracts key terms: brand, model number, color, size
+- Term overlap scoring for accuracy
+- **Score: 0.70-0.95** (70-95% confidence)
+
+### Tier 4: Semantic Search
+- OpenAI embeddings with vector similarity
+- Understands synonyms and variations
+- Most expensive, used as last resort
+- **Score: 0.70-0.85** (70-85% confidence)
+
+### Document Format Intelligence
+
+**Smart Header Detection:**
+- Automatically detects actual data header row
+- Skips metadata, totals, and report information
+- Handles documents with 10+ header rows
+
+**Flexible Column Mapping:**
+- Recognizes variations: "Item Description", "Product Name", "Description", "Item"
+- Handles multiple SKU columns simultaneously
+- Adapts to different CSV/Excel structures
+
+**Advanced CSV Parsing:**
+- Handles quoted commas and complex formatting
+- Preserves data integrity across variations
+
 ## 🚀 Next Steps
 
 1. ✅ Database schema created
-2. ⏳ Import master product catalog
-3. ⏳ Create OpenAI agents
-4. ⏳ Build processing edge functions
-5. ⏳ Update frontend components
-6. ⏳ Test end-to-end flow
+2. ✅ Import master product catalog
+3. ✅ Build intelligent processing engine
+4. ✅ Implement multi-tier matching system
+5. ⏳ Add Excel (.xlsx) file support
+6. ⏳ Test with various document formats
 
 ---
 

@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import ReCAPTCHA from "react-google-recaptcha";
+import { Loader2 } from "lucide-react";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ export function DocumentSubmissionForm() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [submissionId, setSubmissionId] = useState<string | null>(null);
@@ -87,6 +89,8 @@ export function DocumentSubmissionForm() {
       return;
     }
 
+    setIsSubmitting(true);
+
     try {
       // Submit to Supabase Edge Function
       const result = await submitDocument({
@@ -118,6 +122,7 @@ export function DocumentSubmissionForm() {
         setIsProcessing(true);
       } catch (procError) {
         console.error("Processing error:", procError);
+        setIsSubmitting(false);
         toast({
           title: "Processing Error",
           description: "Document uploaded but processing failed. Please contact support.",
@@ -126,6 +131,7 @@ export function DocumentSubmissionForm() {
       }
     } catch (error) {
       console.error("Submission error:", error);
+      setIsSubmitting(false);
       toast({
         title: "Submission Failed",
         description: error instanceof Error ? error.message : "Failed to submit form. Please try again.",
@@ -311,9 +317,16 @@ export function DocumentSubmissionForm() {
           <Button
             type="submit"
             className="w-full bg-primary hover:bg-primary/90"
-            disabled={isUploading || !file || !captchaToken}
+            disabled={isUploading || !file || !captchaToken || isSubmitting}
           >
-            Submit Document
+            {isSubmitting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Submitting...
+              </>
+            ) : (
+              "Submit Document"
+            )}
           </Button>
         </form>
       </Form>
