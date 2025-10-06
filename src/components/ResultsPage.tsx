@@ -1,11 +1,41 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DollarSign, Package, Leaf, FileText, ExternalLink, Download, Calendar, Mail, UserPlus } from "lucide-react";
+import { DollarSign, Package, Leaf, FileText, ExternalLink, Download, Calendar, Mail, UserPlus, Loader2 } from "lucide-react";
 import confetti from "canvas-confetti";
+import { getResults, type ProcessingResults } from "@/lib/api/processing";
+import { useToast } from "@/hooks/use-toast";
 
-export function ResultsPage() {
+interface ResultsPageProps {
+  submissionId: string;
+}
+
+export function ResultsPage({ submissionId }: ResultsPageProps) {
+  const [results, setResults] = useState<ProcessingResults | null>(null);
+  const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
+
   useEffect(() => {
+    // Fetch results
+    getResults(submissionId)
+      .then((data) => {
+        setResults(data);
+        setLoading(false);
+      })
+      .catch((error) => {
+        console.error('Error loading results:', error);
+        toast({
+          title: "Error Loading Results",
+          description: error.message || "Failed to load results",
+          variant: "destructive",
+        });
+        setLoading(false);
+      });
+  }, [submissionId, toast]);
+
+  useEffect(() => {
+    if (!results) return;
+    
     // Trigger confetti animation on mount
     const duration = 3000;
     const animationEnd = Date.now() + duration;
@@ -36,20 +66,42 @@ export function ResultsPage() {
     }, 250);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [results]);
 
   const handleViewPDF = () => {
-    // Open PDF in new tab
-    window.open("/BMO_Savings_Kit.pdf", "_blank");
+    if (results?.report.pdf_url) {
+      window.open(results.report.pdf_url, "_blank");
+    } else {
+      // Fallback to sample
+      window.open("/BMO_Savings_Kit.pdf", "_blank");
+    }
   };
 
   const handleDownloadPDF = () => {
-    // Trigger PDF download
     const link = document.createElement("a");
-    link.href = "/BMO_Savings_Kit.pdf";
-    link.download = "BMO_Savings_Kit.pdf";
+    link.href = results?.report.pdf_url || "/BMO_Savings_Kit.pdf";
+    link.download = `BAV_Savings_Report_${new Date().toISOString().split('T')[0]}.pdf`;
     link.click();
   };
+
+  if (loading) {
+    return (
+      <div className="w-full max-w-2xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center space-y-4">
+        <Loader2 className="w-12 h-12 animate-spin text-primary" />
+        <p className="text-muted-foreground">Loading your results...</p>
+      </div>
+    );
+  }
+
+  if (!results) {
+    return (
+      <div className="w-full max-w-2xl mx-auto p-4 sm:p-6 text-center">
+        <p className="text-red-500">Failed to load results. Please try again.</p>
+      </div>
+    );
+  }
+
+  const { summary, customer, report } = results;
 
   return (
     <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
@@ -80,7 +132,12 @@ export function ResultsPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs sm:text-sm text-muted-foreground">Total Cost Savings</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-blue-600">$30,000</p>
+                  <p className="text-2xl sm:text-3xl font-bold text-blue-600">
+                    ${summary.total_cost_savings.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {summary.savings_percentage.toFixed(1)}% savings
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -94,7 +151,12 @@ export function ResultsPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs sm:text-sm text-muted-foreground">Number of Cartridges Saved</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-amber-700">400</p>
+                  <p className="text-2xl sm:text-3xl font-bold text-amber-700">
+                    {summary.cartridges_saved}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {summary.items_with_savings} of {summary.total_items} items optimized
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -108,7 +170,12 @@ export function ResultsPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs sm:text-sm text-muted-foreground">Pounds of CO₂ Reduced</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-green-600">1,000</p>
+                  <p className="text-2xl sm:text-3xl font-bold text-green-600">
+                    {summary.co2_reduced_pounds.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    ≈ {summary.trees_saved.toFixed(2)} trees saved
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -139,10 +206,9 @@ export function ResultsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="aspect-[8.5/11] bg-muted rounded-lg border-2 border-border overflow-hidden max-w-md mx-auto">
-              <embed
-                src="/BMO_Savings_Kit.pdf#view=FitH"
-                type="application/pdf"
+            <div className="aspect-[8.5/11] bg-muted rounded-lg border-2 border-border overflow-hidden max-w-md mx-auto relative">
+              <iframe
+                src={report.pdf_url || "/BMO_Savings_Kit.pdf"}
                 className="w-full h-full"
                 title="PDF Preview"
               />

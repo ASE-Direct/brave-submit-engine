@@ -1,70 +1,55 @@
 import { useState, useEffect } from "react";
 import { Progress } from "@/components/ui/progress";
 import { CheckCircle, FileText, Search, Settings, FileCheck } from "lucide-react";
+import { pollProcessingStatus } from "@/lib/api/processing";
+import { useToast } from "@/hooks/use-toast";
 
-const STEPS = [
-  {
-    id: 1,
-    title: "Processing and Parsing Document",
-    description: "Using OCR to extract data from your document",
-    icon: FileText,
-    duration: 5000,
-  },
-  {
-    id: 2,
-    title: "Cross-Referencing SKUs",
-    description: "Using AI to match products with BAV vendors",
-    icon: Search,
-    duration: 5000,
-  },
-  {
-    id: 3,
-    title: "Optimizing Order Quantities",
-    description: "Adjusting yield quantities for optimal efficiency",
-    icon: Settings,
-    duration: 5000,
-  },
-  {
-    id: 4,
-    title: "Generating Final Report",
-    description: "Compiling your optimized order report",
-    icon: FileCheck,
-    duration: 5000,
-  },
-];
+interface ProcessingAnimationProps {
+  submissionId: string;
+  onComplete?: () => void;
+}
 
-export function ProcessingAnimation({ onComplete }: { onComplete?: () => void }) {
-  const [currentStep, setCurrentStep] = useState(0);
-  const [stepProgress, setStepProgress] = useState(0);
-  const [completedSteps, setCompletedSteps] = useState<number[]>([]);
+export function ProcessingAnimation({ submissionId, onComplete }: ProcessingAnimationProps) {
+  const [progress, setProgress] = useState(0);
+  const [currentStep, setCurrentStep] = useState("Initializing...");
+  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
-    if (currentStep >= STEPS.length) {
-      if (onComplete) {
-        onComplete();
+    pollProcessingStatus(
+      submissionId,
+      (status) => {
+        setProgress(status.progress);
+        setCurrentStep(status.current_step);
       }
-      return;
-    }
-
-    const stepDuration = STEPS[currentStep].duration;
-    const interval = 100;
-    const increment = (interval / stepDuration) * 100;
-
-    const timer = setInterval(() => {
-      setStepProgress((prev) => {
-        if (prev >= 100) {
-          setCompletedSteps((completed) => [...completed, currentStep]);
-          setCurrentStep((step) => step + 1);
-          return 0;
+    )
+      .then(() => {
+        if (onComplete) {
+          onComplete();
         }
-        return prev + increment;
+      })
+      .catch((err) => {
+        console.error('Processing error:', err);
+        setError(err.message);
+        toast({
+          title: "Processing Failed",
+          description: err.message || "An error occurred during processing",
+          variant: "destructive",
+        });
       });
-    }, interval);
+  }, [submissionId, onComplete, toast]);
 
-    return () => clearInterval(timer);
-  }, [currentStep, onComplete]);
-
-  const overallProgress = ((currentStep + stepProgress / 100) / STEPS.length) * 100;
+  if (error) {
+    return (
+      <div className="w-full max-w-2xl mx-auto p-4 sm:p-6 space-y-6 bg-card rounded-lg shadow-lg">
+        <div className="text-center space-y-4">
+          <div className="text-red-500 text-5xl">✕</div>
+          <h2 className="text-2xl font-bold text-secondary">Processing Failed</h2>
+          <p className="text-muted-foreground">{error}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full max-w-2xl mx-auto p-4 sm:p-6 space-y-8 bg-card rounded-lg shadow-lg">
@@ -81,60 +66,34 @@ export function ProcessingAnimation({ onComplete }: { onComplete?: () => void })
           ))}
         </div>
         <h1 className="text-2xl sm:text-3xl font-bold text-secondary">Processing Your Document</h1>
-        <p className="text-sm sm:text-base text-muted-foreground">Please wait while we optimize your order</p>
+        <p className="text-sm sm:text-base text-muted-foreground">Please wait while we analyze your order</p>
       </div>
 
       <div className="space-y-2">
         <div className="flex justify-between text-sm">
-          <span className="font-medium">Overall Progress</span>
-          <span className="text-muted-foreground">{Math.round(overallProgress)}%</span>
+          <span className="font-medium">Progress</span>
+          <span className="text-muted-foreground">{progress}%</span>
         </div>
-        <Progress value={overallProgress} className="h-3" />
+        <Progress value={progress} className="h-3" />
       </div>
 
-      <div className="space-y-4">
-        {STEPS.map((step, index) => {
-          const Icon = step.icon;
-          const isCompleted = completedSteps.includes(index);
-          const isCurrent = currentStep === index;
-          const isPending = index > currentStep;
-
-          return (
-            <div
-              key={step.id}
-              className={`
-                flex items-start gap-4 p-4 rounded-lg border-2 transition-all duration-300
-                ${isCompleted ? "border-green-500 bg-green-50" : ""}
-                ${isCurrent ? "border-primary bg-primary/10 shadow-md" : ""}
-                ${isPending ? "border-border opacity-50" : ""}
-              `}
-            >
-              <div className="flex-shrink-0">
-                {isCompleted ? (
-                  <CheckCircle className="w-6 h-6 sm:w-8 sm:h-8 text-green-500" />
-                ) : (
-                  <Icon
-                    className={`w-6 h-6 sm:w-8 sm:h-8 ${isCurrent ? "text-primary animate-pulse" : "text-muted-foreground"}`}
-                  />
-                )}
-              </div>
-              <div className="flex-1 space-y-2">
-                <h3 className="font-semibold text-secondary">{step.title}</h3>
-                <p className="text-sm text-muted-foreground">{step.description}</p>
-                {isCurrent && (
-                  <Progress value={stepProgress} className="h-2" />
-                )}
-              </div>
-            </div>
-          );
-        })}
+      <div className="p-6 rounded-lg border-2 border-primary/20 bg-primary/5">
+        <div className="flex items-center gap-4">
+          <div className="animate-spin">
+            <Settings className="w-8 h-8 text-primary" />
+          </div>
+          <div>
+            <p className="font-semibold text-secondary">{currentStep}</p>
+            <p className="text-sm text-muted-foreground">This may take up to 2 minutes...</p>
+          </div>
+        </div>
       </div>
 
-      {currentStep >= STEPS.length && (
+      {progress === 100 && (
         <div className="text-center space-y-4 animate-fade-in">
-          <CheckCircle className="w-16 h-16 mx-auto text-primary" />
+          <CheckCircle className="w-16 h-16 mx-auto text-green-500" />
           <h2 className="text-2xl font-bold text-secondary">Processing Complete!</h2>
-          <p className="text-muted-foreground">Your optimized report has been generated</p>
+          <p className="text-muted-foreground">Loading your results...</p>
         </div>
       )}
     </div>

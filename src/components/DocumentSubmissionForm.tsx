@@ -12,6 +12,7 @@ import { ResultsPage } from "@/components/ResultsPage";
 import { useToast } from "@/hooks/use-toast";
 import { getRecaptchaSiteKey } from "@/config/recaptcha";
 import { submitDocument } from "@/lib/supabase";
+import { startProcessing } from "@/lib/api/processing";
 
 const formSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100),
@@ -33,6 +34,7 @@ export function DocumentSubmissionForm() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [submissionId, setSubmissionId] = useState<string | null>(null);
   const { toast } = useToast();
   const recaptchaRef = useRef<ReCAPTCHA>(null);
 
@@ -101,13 +103,27 @@ export function DocumentSubmissionForm() {
 
       console.log("Submission successful:", result);
       
-      // Show success message
-      toast({
-        title: "Success!",
-        description: "Your document has been submitted successfully",
-      });
+      // Save submission ID for processing
+      setSubmissionId(result.submissionId);
       
-      setIsProcessing(true);
+      // Start background processing
+      try {
+        await startProcessing(result.submissionId);
+        
+        toast({
+          title: "Success!",
+          description: "Your document is being processed",
+        });
+        
+        setIsProcessing(true);
+      } catch (procError) {
+        console.error("Processing error:", procError);
+        toast({
+          title: "Processing Error",
+          description: "Document uploaded but processing failed. Please contact support.",
+          variant: "destructive",
+        });
+      }
     } catch (error) {
       console.error("Submission error:", error);
       toast({
@@ -147,12 +163,17 @@ export function DocumentSubmissionForm() {
     });
   };
 
-  if (showResults) {
-    return <ResultsPage />;
+  if (showResults && submissionId) {
+    return <ResultsPage submissionId={submissionId} />;
   }
 
-  if (isProcessing) {
-    return <ProcessingAnimation onComplete={() => setShowResults(true)} />;
+  if (isProcessing && submissionId) {
+    return (
+      <ProcessingAnimation 
+        submissionId={submissionId}
+        onComplete={() => setShowResults(true)} 
+      />
+    );
   }
 
   return (

@@ -1,0 +1,436 @@
+/**
+ * PDF Report Generator
+ * 
+ * Generates branded PDF reports with savings analysis
+ */
+
+import { jsPDF } from 'npm:jspdf@2.5.2';
+
+interface ReportData {
+  customer: {
+    firstName: string;
+    lastName: string;
+    company: string;
+    email: string;
+  };
+  summary: {
+    total_current_cost: number;
+    total_optimized_cost: number;
+    total_cost_savings: number;
+    savings_percentage: number;
+    total_items: number;
+    items_with_savings: number;
+    environmental: {
+      cartridges_saved: number;
+      co2_reduced_pounds: number;
+      trees_saved: number;
+      plastic_reduced_pounds: number;
+    };
+  };
+  breakdown: Array<{
+    current_product: {
+      name: string;
+      sku: string;
+      quantity: number;
+      unit_price: number;
+      total_cost: number;
+    };
+    recommended_product?: {
+      name: string;
+      sku: string;
+      quantity_needed: number;
+      unit_price: number;
+      total_cost: number;
+      bulk_discount_applied?: boolean;
+    };
+    savings?: {
+      cost_savings: number;
+      cost_savings_percentage: number;
+      cartridges_saved: number;
+      co2_reduced: number;
+    };
+    reason?: string;
+    recommendation_type?: string;
+  }>;
+}
+
+/**
+ * Generate PDF report
+ */
+export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'letter'
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 20;
+  const contentWidth = pageWidth - (margin * 2);
+
+  // Colors matching BAV brand
+  const brandRed = '#C00000';
+  const brandNavy = '#2A2963';
+  const lightGray = '#F5F5F5';
+  const darkGray = '#666666';
+
+  let yPos = 20;
+
+  // ===== PAGE 1: HEADER & SUMMARY =====
+
+  // Add BAV logo text (since we can't easily embed SVG in jsPDF)
+  doc.setFontSize(32);
+  doc.setTextColor(brandNavy);
+  doc.setFont('helvetica', 'bold');
+  doc.text('BAV', margin, yPos);
+  
+  // Add stars
+  doc.setFontSize(12);
+  doc.setTextColor(brandRed);
+  for (let i = 0; i < 5; i++) {
+    doc.text('★', margin + 15 + (i * 4), yPos - 2);
+  }
+  
+  yPos += 12;
+  
+  // Subtitle
+  doc.setFontSize(11);
+  doc.setTextColor(brandNavy);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Better American Value', margin, yPos);
+  
+  yPos += 15;
+
+  // Title
+  doc.setFontSize(24);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandNavy);
+  doc.text('Savings Challenge Report', margin, yPos);
+  
+  yPos += 12;
+
+  // Customer info
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(darkGray);
+  doc.text(`Prepared for: ${data.customer.firstName} ${data.customer.lastName}`, margin, yPos);
+  yPos += 6;
+  doc.text(`Company: ${data.customer.company}`, margin, yPos);
+  yPos += 6;
+  doc.text(`Date: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`, margin, yPos);
+  
+  yPos += 15;
+
+  // Divider line
+  doc.setDrawColor(brandRed);
+  doc.setLineWidth(0.5);
+  doc.line(margin, yPos, pageWidth - margin, yPos);
+  
+  yPos += 12;
+
+  // Executive Summary Box
+  doc.setFillColor(lightGray);
+  doc.rect(margin, yPos, contentWidth, 45, 'F');
+  
+  yPos += 8;
+  
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandNavy);
+  doc.text('Executive Summary', margin + 5, yPos);
+  
+  yPos += 10;
+
+  // Key metrics in columns
+  const col1X = margin + 5;
+  const col2X = margin + contentWidth / 2;
+
+  // Column 1
+  doc.setFontSize(10);
+  doc.setTextColor(darkGray);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Total Cost Savings', col1X, yPos);
+  
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandRed);
+  doc.text(`$${data.summary.total_cost_savings.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col1X, yPos + 8);
+  
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(darkGray);
+  doc.text(`${data.summary.savings_percentage.toFixed(1)}% savings`, col1X, yPos + 14);
+
+  // Column 2
+  doc.setFontSize(10);
+  doc.text('Items Analyzed', col2X, yPos);
+  
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandNavy);
+  doc.text(`${data.summary.total_items}`, col2X, yPos + 8);
+  
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(darkGray);
+  doc.text(`${data.summary.items_with_savings} with savings`, col2X, yPos + 14);
+
+  yPos += 25;
+
+  // Environmental Impact Box
+  yPos += 8;
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(brandRed);
+  doc.setLineWidth(0.3);
+  doc.rect(margin, yPos, contentWidth, 35, 'D');
+  
+  yPos += 8;
+  
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandNavy);
+  doc.text('Environmental Impact', margin + 5, yPos);
+  
+  yPos += 10;
+
+  // Environmental metrics in 3 columns
+  const envCol1 = margin + 5;
+  const envCol2 = margin + contentWidth / 3;
+  const envCol3 = margin + (contentWidth * 2 / 3);
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(darkGray);
+  
+  // Cartridges Saved
+  doc.text('Cartridges Saved', envCol1, yPos);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandRed);
+  doc.text(`${data.summary.environmental.cartridges_saved}`, envCol1, yPos + 7);
+  
+  // CO2 Reduced
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(darkGray);
+  doc.text('CO₂ Reduced (lbs)', envCol2, yPos);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandRed);
+  doc.text(`${data.summary.environmental.co2_reduced_pounds.toFixed(0)}`, envCol2, yPos + 7);
+  
+  // Trees Saved
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(darkGray);
+  doc.text('Trees Equivalent', envCol3, yPos);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandRed);
+  doc.text(`${data.summary.environmental.trees_saved.toFixed(2)}`, envCol3, yPos + 7);
+
+  yPos += 20;
+
+  // ===== PAGE 2+: DETAILED BREAKDOWN =====
+  
+  // Only show items with savings
+  const itemsWithSavings = data.breakdown.filter(item => 
+    item.savings && item.savings.cost_savings > 0
+  );
+
+  if (itemsWithSavings.length > 0) {
+    doc.addPage();
+    yPos = 20;
+
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(brandNavy);
+    doc.text('Detailed Savings Breakdown', margin, yPos);
+    
+    yPos += 10;
+
+    // Sort by savings (highest first)
+    itemsWithSavings.sort((a, b) => 
+      (b.savings?.cost_savings || 0) - (a.savings?.cost_savings || 0)
+    );
+
+    let itemCount = 0;
+    const maxItemsPerPage = 3;
+
+    for (const item of itemsWithSavings) {
+      // Check if we need a new page
+      if (itemCount > 0 && itemCount % maxItemsPerPage === 0) {
+        doc.addPage();
+        yPos = 20;
+      }
+
+      // Item box
+      const boxHeight = 55;
+      
+      doc.setFillColor(lightGray);
+      doc.rect(margin, yPos, contentWidth, boxHeight, 'F');
+      
+      yPos += 8;
+
+      // Current Product
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(brandNavy);
+      doc.text('Current:', margin + 3, yPos);
+      
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(darkGray);
+      
+      const currentName = doc.splitTextToSize(item.current_product.name, contentWidth - 10);
+      doc.text(currentName[0], margin + 3, yPos + 5);
+      
+      doc.text(
+        `${item.current_product.quantity} × $${item.current_product.unit_price.toFixed(2)} = $${item.current_product.total_cost.toFixed(2)}`,
+        margin + 3,
+        yPos + 10
+      );
+
+      yPos += 18;
+
+      // Recommended Product
+      if (item.recommended_product) {
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(brandRed);
+        doc.text('Recommended:', margin + 3, yPos);
+        
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(darkGray);
+        
+        const recName = doc.splitTextToSize(item.recommended_product.name, contentWidth - 10);
+        doc.text(recName[0], margin + 3, yPos + 5);
+        
+        doc.text(
+          `${item.recommended_product.quantity_needed} × $${item.recommended_product.unit_price.toFixed(2)} = $${item.recommended_product.total_cost.toFixed(2)}`,
+          margin + 3,
+          yPos + 10
+        );
+        
+        if (item.recommended_product.bulk_discount_applied) {
+          doc.setTextColor(brandRed);
+          doc.text('(Bulk discount applied)', margin + 3, yPos + 14);
+        }
+      }
+
+      yPos += 18;
+
+      // Savings badge
+      if (item.savings) {
+        const savingsX = pageWidth - margin - 45;
+        const savingsY = yPos - 35;
+        
+        doc.setFillColor(brandRed);
+        doc.roundedRect(savingsX, savingsY, 40, 15, 2, 2, 'F');
+        
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(255, 255, 255);
+        doc.text('SAVE', savingsX + 3, savingsY + 6);
+        doc.setFontSize(12);
+        doc.text(`$${item.savings.cost_savings.toFixed(0)}`, savingsX + 3, savingsY + 12);
+      }
+
+      // Reason
+      if (item.reason) {
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'italic');
+        doc.setTextColor(darkGray);
+        const reasonText = doc.splitTextToSize(item.reason, contentWidth - 10);
+        doc.text(reasonText, margin + 3, yPos);
+      }
+
+      yPos += 10;
+      itemCount++;
+    }
+  }
+
+  // ===== FINAL PAGE: CALL TO ACTION =====
+  doc.addPage();
+  yPos = pageHeight / 3;
+
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandNavy);
+  doc.text('Ready to Start Saving?', pageWidth / 2, yPos, { align: 'center' });
+  
+  yPos += 15;
+
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(darkGray);
+  const ctaText = [
+    'Our team is ready to help you implement these savings',
+    'and start reducing both costs and environmental impact.',
+    '',
+    'Contact us today to get started!'
+  ];
+  
+  ctaText.forEach(line => {
+    doc.text(line, pageWidth / 2, yPos, { align: 'center' });
+    yPos += 7;
+  });
+
+  yPos += 15;
+
+  // Contact box
+  doc.setFillColor(brandNavy);
+  doc.roundedRect(margin + 30, yPos, contentWidth - 60, 30, 3, 3, 'F');
+  
+  yPos += 10;
+
+  doc.setFontSize(11);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Email: sales@bav.com', pageWidth / 2, yPos, { align: 'center' });
+  yPos += 7;
+  doc.text('Phone: 1-800-BAV-SAVE', pageWidth / 2, yPos, { align: 'center' });
+  yPos += 7;
+  doc.text('Web: www.betteramericanvalue.com', pageWidth / 2, yPos, { align: 'center' });
+
+  // Footer on all pages
+  const totalPages = doc.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(darkGray);
+    doc.setFont('helvetica', 'normal');
+    doc.text(
+      `BAV Savings Challenge Report | Page ${i} of ${totalPages}`,
+      pageWidth / 2,
+      pageHeight - 10,
+      { align: 'center' }
+    );
+    
+    // Copyright
+    doc.text(
+      `© ${new Date().getFullYear()} Better American Value. All rights reserved.`,
+      pageWidth / 2,
+      pageHeight - 5,
+      { align: 'center' }
+    );
+  }
+
+  // Return as Uint8Array
+  return doc.output('arraybuffer') as Uint8Array;
+}
+
+/**
+ * Helper to format currency
+ */
+function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(amount);
+}
+
