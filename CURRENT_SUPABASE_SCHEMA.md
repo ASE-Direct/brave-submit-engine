@@ -5,9 +5,27 @@
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
+- ✅ Added intelligent column detection for various file formats (usage reports, purchase orders, etc.)
+- ✅ Implemented pricing fallback logic: User Price → Partner List Price → Estimated (ASE × 1.35)
+- ✅ Support for files without price columns (e.g., usage/inventory reports)
 - ✅ Added Excel file processing support (.xlsx, .xls) using SheetJS library
 - ✅ Enhanced file parsing with binary format handling
 - ✅ Intelligent header detection for both CSV and Excel files
+
+## 💰 Pricing Logic
+
+When calculating savings, the system uses a **3-tier pricing fallback**:
+
+1. **User's Price** (Primary): Price from the uploaded file's price column
+2. **Partner List Price** (Fallback): `master_products.list_price` - partner/retail pricing
+3. **Estimated Price** (Last Resort): `ase_unit_price × 1.35` (assumes ~35% markup)
+
+**Price Source Tracking:**
+- `user_file`: Price extracted from user's document
+- `partner_list_price`: Using catalog's partner list price
+- `estimated`: Calculated estimate based on ASE pricing
+
+This ensures accurate savings calculations even when user files don't include pricing data (e.g., usage reports, inventory exports).
 
 ---
 
@@ -102,6 +120,16 @@ Master product catalog with pricing and environmental data.
 - `uom` (TEXT) - Unit of measure (EA, PK, etc.)
 - `pack_quantity` (INTEGER) - Items per pack
 
+**NEW: Canonical Fields (Battle-Tested Deterministic Matching):**
+- `family_series` (TEXT) - Product family for grouping alternatives (e.g., "Brother TN7xx", "HP 64")
+- `yield_class` (TEXT) - Yield classification: standard, high, extra_high, super_high
+- `compatible_printers` (TEXT[]) - Array of compatible printer models
+- `oem_vs_compatible` (TEXT) - OEM, reman, or compatible
+- `uom_std` (TEXT) - Standardized UOM (EA, BX, CS, PK, CT)
+- `pack_qty_std` (INTEGER) - Standardized pack quantity
+- `ase_unit_price` (DECIMAL(10,4)) - Normalized price per-each (THE GOLDEN RULE)
+- `inventory_status` (TEXT) - in_stock, low, oos
+
 **Environmental Data:**
 - `co2_per_unit` (DECIMAL) - CO2 pounds per unit (default: 2.5 for ink, 5.2 for toner)
 - `recyclable` (BOOLEAN) - Is recyclable
@@ -140,6 +168,9 @@ Master product catalog with pricing and environmental data.
 
 **Constraints:**
 - `size_category` must be in: `standard`, `xl`, `xxl`, `bulk`
+- `yield_class` must be in: `standard`, `high`, `extra_high`, `super_high`
+- `oem_vs_compatible` must be in: `OEM`, `reman`, `compatible`
+- `inventory_status` must be in: `in_stock`, `low`, `oos`
 
 **RLS:** Enabled
 
@@ -198,8 +229,8 @@ Individual line items extracted from customer orders.
 **Constraints:**
 - `confidence_score` must be between 0 and 1
 - `match_score` must be between 0 and 1
-- `match_method` must be valid enum value
-- `recommendation_type` must be valid enum value
+- `match_method` must be in: `exact_sku`, `fuzzy_sku`, `fuzzy_name`, `semantic`, `ai_suggested`, `manual`, `none`, `error`, `timeout`
+- `recommendation_type` must be in: `bulk_pricing`, `larger_size`, `alternative_product`, `combo_pack`, `no_change`
 
 **RLS:** Enabled
 
@@ -426,31 +457,52 @@ ORDER BY oie.cost_savings DESC NULLS LAST;
 
 ---
 
-## 🎯 Product Matching Intelligence
+## 🎯 Product Matching Intelligence (Battle-Tested Deterministic Approach)
 
-The system uses a **4-tier intelligent matching strategy** to achieve high accuracy across various document formats:
+The system uses a **5-tier intelligent matching strategy** with deterministic rules first, AI only as fallback:
 
-### Tier 1: Multi-SKU Exact Matching
+### Tier 1: Exact SKU Matching
 - Attempts exact match on **all available SKU columns** (Staples SKU, OEM Number, Part Number, etc.)
 - Case-insensitive matching with normalization
 - **Score: 1.0** (100% confidence)
+- **Method:** `exact_sku`
 
-### Tier 2: Fuzzy SKU Matching
+### Tier 2: Fuzzy SKU Matching (NEW)
 - Handles variations: spaces, dashes, underscores, case differences
 - Example: "W2021A", "W-2021-A", "w2021a" all match
+- Normalized comparison after stripping special characters
 - **Score: 0.85-0.95** (85-95% confidence)
+- **Method:** `fuzzy_sku`
 
 ### Tier 3: Full-Text Search
 - PostgreSQL full-text search with term ranking
 - Extracts key terms: brand, model number, color, size
 - Term overlap scoring for accuracy
 - **Score: 0.70-0.95** (70-95% confidence)
+- **Method:** `fuzzy_name`
 
 ### Tier 4: Semantic Search
 - OpenAI embeddings with vector similarity
 - Understands synonyms and variations
-- Most expensive, used as last resort
+- Used when text search fails
 - **Score: 0.70-0.85** (70-85% confidence)
+- **Method:** `semantic`
+
+### Tier 5: AI Agent (Last Resort)
+- OpenAI gpt-4o-mini for intelligent parsing
+- Only used when all other methods fail (score < 0.30)
+- Extracts attributes and suggests best match
+- **Score: 0.65-0.95** (capped at 0.95, never 1.0)
+- **Method:** `ai_suggested`
+
+### Domain Rules (Toner/Ink Cartridges)
+
+The following rules are enforced during matching to prevent mismatches:
+
+1. **Color Match**: Must match `color_type` exactly (black ≠ cyan)
+2. **Yield Class Guard**: Never recommend lower yield (XL → standard is rejected)
+3. **Family Series**: Products must be in same `family_series` for alternatives
+4. **OEM Policy**: Compatible products flagged separately via `oem_vs_compatible`
 
 ### Document Format Intelligence
 
@@ -468,14 +520,83 @@ The system uses a **4-tier intelligent matching strategy** to achieve high accur
 - Handles quoted commas and complex formatting
 - Preserves data integrity across variations
 
-## 🚀 Next Steps
+## 💰 Savings Calculation (Battle-Tested CPP Approach)
 
-1. ✅ Database schema created
-2. ✅ Import master product catalog
-3. ✅ Build intelligent processing engine
-4. ✅ Implement multi-tier matching system
-5. ⏳ Add Excel (.xlsx) file support
-6. ⏳ Test with various document formats
+### Price Normalization (THE GOLDEN RULE)
+
+**All prices are normalized to per-each basis before comparison:**
+
+```typescript
+normalized_price = unit_price / pack_qty
+```
+
+This prevents "BX vs EA" comparison errors and ensures fair price comparison.
+
+### Cost Per Page (CPP) Calculation
+
+For toner and ink cartridges, we calculate Cost Per Page (CPP):
+
+```typescript
+cpp = normalized_price / page_yield
+```
+
+CPP is the **primary metric** for optimization recommendations.
+
+### Higher-Yield Optimization
+
+The system suggests higher-yield alternatives using:
+
+1. **Family Matching**: Find products in same `family_series`
+2. **Color Matching**: Must match `color_type` exactly
+3. **Yield Filter**: Only equal or higher `yield_class`
+4. **CPP Ranking**: Rank by lowest CPP
+5. **Savings Threshold**: Only recommend if CPP savings ≥ 5% AND dollar savings > $5/year
+
+### Recommendation Logic
+
+```typescript
+// Calculate user's current cost
+user_current_cost = quantity × user_unit_price
+
+// Calculate recommended cost (with normalized pricing)
+recommended_cost = quantity_needed × ase_unit_price
+
+// Only recommend if actual savings
+if (user_current_cost - recommended_cost > 0) {
+  recommend()
+}
+```
+
+### Example Calculation
+
+**User's Order:**
+- Product: HP 64 Black (Standard, 300 pages)
+- Quantity: 5 cartridges
+- Unit Price: $29.99 each
+- Total: $149.95
+
+**Our Recommendation:**
+- Product: HP 64XL Black (High Yield, 600 pages)
+- Quantity Needed: 3 cartridges (to match 1500 total pages)
+- ASE Price: $39.99 each
+- Total: $119.97
+
+**Savings:**
+- Cost Savings: $29.98 (20%)
+- Cartridges Saved: 2
+- CPP: $0.100 → $0.067 (33% better)
+
+## 🚀 Implementation Status
+
+1. ✅ Database schema created with canonical fields
+2. ✅ Import master product catalog with family_series detection
+3. ✅ Build deterministic processing engine
+4. ✅ Implement 5-tier matching system with domain rules
+5. ✅ Add price normalization (per-each basis)
+6. ✅ Implement CPP-based higher-yield optimization
+7. ✅ Excel (.xlsx) file support
+8. ✅ Update AI to use gpt-4o-mini
+9. ⏳ Test with various document formats
 
 ---
 

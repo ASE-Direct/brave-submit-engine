@@ -18,6 +18,286 @@ const openaiApiKey = Deno.env.get('OPENAI_API_KEY')!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 const openai = new OpenAI({ apiKey: openaiApiKey });
 
+// ============================================================================
+// NORMALIZATION HELPERS (Battle-Tested Deterministic Approach)
+// ============================================================================
+
+/**
+ * Normalize UOM to canonical values
+ */
+function normalizeUOM(uom?: string): 'EA' | 'BX' | 'CS' | 'PK' | 'CT' {
+  if (!uom) return 'EA';
+  
+  const lower = uom.toLowerCase().trim();
+  if (lower === 'ea' || lower === 'each') return 'EA';
+  if (lower === 'bx' || lower === 'box') return 'BX';
+  if (lower === 'cs' || lower === 'case') return 'CS';
+  if (lower === 'pk' || lower === 'pack' || lower === 'package') return 'PK';
+  if (lower === 'ct' || lower === 'carton') return 'CT';
+  
+  return 'EA'; // Default to each
+}
+
+/**
+ * Normalize price to per-each basis (THE GOLDEN RULE)
+ * You cannot compare prices until they're on the same basis.
+ */
+interface NormalizedPrice {
+  pricePerEach: number;  // Price for a single unit
+  quantityInEach: number; // Total quantity in "each" units
+  packQty: number;        // Pack quantity used
+  uomStd: string;         // Standardized UOM
+}
+
+function normalizePriceAndQuantity(
+  price: number,
+  quantity: number,
+  packQty: number = 1,
+  uom: string = 'EA'
+): NormalizedPrice {
+  const safePackQty = Math.max(packQty || 1, 1);
+  const normalizedUom = normalizeUOM(uom);
+  
+  // Price per single unit (each)
+  const pricePerEach = price / safePackQty;
+  
+  // Total quantity in "each" units
+  // If buying in packs/boxes, multiply quantity by pack size
+  const quantityInEach = normalizedUom === 'EA' 
+    ? quantity 
+    : quantity * safePackQty;
+  
+  return {
+    pricePerEach,
+    quantityInEach,
+    packQty: safePackQty,
+    uomStd: normalizedUom
+  };
+}
+
+/**
+ * Calculate Cost Per Page (CPP) - Key metric for toner/ink optimization
+ */
+function calculateCostPerPage(pricePerEach: number, pageYield: number): number | null {
+  if (!pageYield || pageYield <= 0) return null;
+  if (!pricePerEach || pricePerEach <= 0) return null;
+  
+  return pricePerEach / pageYield;
+}
+
+/**
+ * Determine yield rank for comparison (higher is better)
+ */
+function yieldRank(yieldClass?: string): number {
+  const ranks: Record<string, number> = {
+    'standard': 1,
+    'high': 2,
+    'extra_high': 3,
+    'super_high': 4
+  };
+  
+  return ranks[yieldClass || 'standard'] || 1;
+}
+
+// ============================================================================
+// HIGHER-YIELD OPTIMIZATION (Battle-Tested CPP-Based Recommendations)
+// ============================================================================
+
+interface VolumeHints {
+  monthlyPages?: number;
+  horizonMonths?: number;
+}
+
+interface HigherYieldRecommendation {
+  recommended: any; // Recommended product
+  recommendedPrice: number; // Price per unit (ase_unit_price or unit_price)
+  cppCurrent: number; // Cost per page of current
+  cppRecommended: number; // Cost per page of recommended
+  est12moSavingsAtVolume: number; // Estimated 12-month savings
+  quantityNeeded: number; // How many of recommended product
+  reason: string; // Explanation
+}
+
+/**
+ * Suggest higher-yield alternative within same product family
+ * 
+ * This implements the battle-tested approach:
+ * 1. Find products in same family_series + color
+ * 2. Filter to equal or higher yield_class
+ * 3. Calculate CPP (cost per page) for each
+ * 4. Recommend lowest CPP with material savings
+ */
+async function suggestHigherYield(
+  currentProduct: any,
+  userQuantity: number,
+  userUnitPrice: number,
+  volume: VolumeHints = { monthlyPages: 1000, horizonMonths: 12 }
+): Promise<HigherYieldRecommendation | null> {
+  // Validate we have required data
+  if (!currentProduct.family_series) {
+    console.log('    ⊘ No family_series for optimization');
+    return null;
+  }
+  
+  if (!currentProduct.page_yield || currentProduct.page_yield <= 0) {
+    console.log('    ⊘ No page_yield for CPP calculation');
+    return null;
+  }
+  
+  // Check BOTH ase_unit_price and unit_price (use either), FALLBACK to cost
+  const currentAsePrice = (currentProduct.ase_unit_price && currentProduct.ase_unit_price > 0)
+    ? currentProduct.ase_unit_price
+    : (currentProduct.unit_price && currentProduct.unit_price > 0)
+      ? currentProduct.unit_price
+      : currentProduct.cost;
+    
+  if (!currentAsePrice || currentAsePrice <= 0) {
+    console.log('    ⊘ No ase_unit_price, unit_price, or cost for comparison');
+    return null;
+  }
+  
+  // Calculate volume for comparison
+  const pages = (volume.monthlyPages ?? 1000) * (volume.horizonMonths ?? 12);
+  
+  // Get family peers (same family_series, same color, equal or higher yield)
+  const { data: familyProducts, error } = await supabase
+    .from('master_products')
+    .select('*')
+    .eq('family_series', currentProduct.family_series)
+    .eq('active', true)
+    .not('page_yield', 'is', null)
+    .gte('page_yield', currentProduct.page_yield * 0.8); // Allow slightly lower yield for edge cases
+  // Note: Not filtering by price here - we'll filter in JS to check both ase_unit_price and unit_price
+  
+  if (error || !familyProducts || familyProducts.length === 0) {
+    console.log('    ⊘ No family alternatives found');
+    return null;
+  }
+  
+  // Filter by color match (strict for toner/ink)
+  const sameColorFamily = familyProducts.filter(p => {
+    // Must match color
+    if (currentProduct.color_type && p.color_type !== currentProduct.color_type) {
+      return false;
+    }
+    
+    // Must be equal or higher yield class
+    if (yieldRank(p.yield_class) < yieldRank(currentProduct.yield_class)) {
+      return false;
+    }
+    
+    // Must have valid pricing (check BOTH fields, FALLBACK to cost)
+    const hasPrice = (p.ase_unit_price && p.ase_unit_price > 0) || (p.unit_price && p.unit_price > 0) || (p.cost && p.cost > 0);
+    if (!hasPrice) {
+      return false;
+    }
+    
+    if (!p.page_yield || p.page_yield <= 0) {
+      return false;
+    }
+    
+    return true;
+  });
+  
+  if (sameColorFamily.length === 0) {
+    console.log('    ⊘ No matching color family alternatives');
+    return null;
+  }
+  
+  // Calculate CPP for each candidate
+  const currentCPP = calculateCostPerPage(currentAsePrice, currentProduct.page_yield);
+  
+  if (!currentCPP) {
+    console.log('    ⊘ Cannot calculate CPP for current product');
+    return null;
+  }
+  
+  // Rank by CPP (lowest is best)
+  const ranked = sameColorFamily
+    .map(p => {
+      // Use whichever price field is available, FALLBACK to cost
+      const pPrice = (p.ase_unit_price && p.ase_unit_price > 0) ? p.ase_unit_price : (p.unit_price && p.unit_price > 0) ? p.unit_price : p.cost;
+      const cpp = calculateCostPerPage(pPrice, p.page_yield);
+      if (!cpp) return null;
+      
+      const periodCost = cpp * pages;
+      const savingsPerYear = (currentCPP - cpp) * pages;
+      
+      return { 
+        product: p, 
+        cpp, 
+        periodCost,
+        savingsPerYear
+      };
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+    .sort((a, b) => a.cpp - b.cpp);
+  
+  if (ranked.length === 0) {
+    return null;
+  }
+  
+  const best = ranked[0];
+  
+  // Only recommend if:
+  // 1. It's a different product
+  // 2. It has materially better CPP (at least 5% savings)
+  // 3. Savings are meaningful (>$5/year)
+  const cppSavingsPct = ((currentCPP - best.cpp) / currentCPP) * 100;
+  
+  if (best.product.id === currentProduct.id) {
+    return null; // Same product
+  }
+  
+  if (best.cpp >= currentCPP * 0.95) {
+    console.log(`    ⊘ CPP not materially better: ${best.cpp.toFixed(4)} vs ${currentCPP.toFixed(4)}`);
+    return null; // Not enough savings (<5%)
+  }
+  
+  if (best.savingsPerYear < 5) {
+    console.log(`    ⊘ Savings too small: $${best.savingsPerYear.toFixed(2)}/year`);
+    return null; // Savings too small
+  }
+  
+  // Calculate how many units needed to meet user's volume
+  const userTotalPages = userQuantity * currentProduct.page_yield;
+  const quantityNeeded = Math.ceil(userTotalPages / best.product.page_yield);
+  
+  // Calculate actual savings based on user's current spending
+  const userCurrentCost = userQuantity * userUnitPrice;
+  // Use whichever price field is available for the recommended product, FALLBACK to cost
+  const recommendedPrice = (best.product.ase_unit_price && best.product.ase_unit_price > 0) 
+    ? best.product.ase_unit_price 
+    : (best.product.unit_price && best.product.unit_price > 0)
+      ? best.product.unit_price
+      : best.product.cost;
+  const recommendedCost = quantityNeeded * recommendedPrice;
+  const actualSavings = userCurrentCost - recommendedCost;
+  
+  // Only recommend if there are actual dollar savings
+  if (actualSavings <= 0) {
+    console.log(`    ⊘ No actual savings: user pays $${userCurrentCost.toFixed(2)}, recommended $${recommendedCost.toFixed(2)}`);
+    return null;
+  }
+  
+  const cartridgesSaved = userQuantity - quantityNeeded;
+  
+  return {
+    recommended: best.product,
+    recommendedPrice, // Include the price we calculated
+    cppCurrent: currentCPP,
+    cppRecommended: best.cpp,
+    est12moSavingsAtVolume: best.savingsPerYear,
+    quantityNeeded,
+    reason: `Switch to ${best.product.yield_class?.toUpperCase() || 'High Yield'} ${best.product.product_name} ` +
+            `(${best.product.page_yield.toLocaleString()} pages vs ${currentProduct.page_yield.toLocaleString()} pages). ` +
+            `Cost per page: $${best.cpp.toFixed(4)} vs current $${currentCPP.toFixed(4)} ` +
+            `(${cppSavingsPct.toFixed(1)}% better). ` +
+            `Saves ${cartridgesSaved} cartridge${cartridgesSaved !== 1 ? 's' : ''} and $${actualSavings.toFixed(2)} ` +
+            `(${((actualSavings / userCurrentCost) * 100).toFixed(1)}% savings).`
+  };
+}
+
 interface ProcessingContext {
   submissionId: string;
   jobId: string;
@@ -64,7 +344,7 @@ async function updateProgress(
  */
 async function processDocument(context: ProcessingContext) {
   const chunkIndex = context.chunkIndex || 0;
-  const CHUNK_SIZE = 200; // Process 200 items per chunk (safe for timeout with savings calc)
+  const CHUNK_SIZE = 100; // Process 100 items per chunk (safe for timeout with semantic search + savings calc)
   
   console.log(`🚀 Processing chunk ${chunkIndex + 1} for job:`, context.jobId);
 
@@ -159,6 +439,13 @@ async function processDocument(context: ProcessingContext) {
           color_type,
           page_yield,
           unit_price,
+          ase_unit_price,
+          list_price,
+          cost,
+          family_series,
+          yield_class,
+          pack_quantity,
+          uom,
           active
         )
       `)
@@ -327,17 +614,33 @@ async function parseDocument(content: string | ArrayBuffer, fileName: string) {
     console.log('📊 Parsing Excel file...');
     const workbook = XLSX.read(content, { type: 'array' });
     
-    // Get first worksheet
-    const firstSheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[firstSheetName];
+    console.log(`📊 Available sheets: ${workbook.SheetNames.join(', ')}`);
     
-    console.log(`📊 Reading sheet: ${firstSheetName}`);
+    // Find the sheet with the most data
+    let bestSheet = workbook.SheetNames[0];
+    let maxRows = 0;
     
-    // Convert to array of arrays
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false, raw: false });
+      const rowCount = data.length;
+      console.log(`   "${sheetName}": ${rowCount} rows`);
+      
+      if (rowCount > maxRows) {
+        maxRows = rowCount;
+        bestSheet = sheetName;
+      }
+    }
+    
+    console.log(`📊 Using sheet with most data: "${bestSheet}" (${maxRows} rows)`);
+    const worksheet = workbook.Sheets[bestSheet];
+    
+    // Convert to array of arrays - keep all values as strings
     const rawData = XLSX.utils.sheet_to_json(worksheet, { 
       header: 1,  // Return array of arrays
       defval: '',  // Default value for empty cells
-      blankrows: false  // Skip blank rows
+      blankrows: false,  // Skip blank rows
+      raw: false  // Don't convert dates/numbers - keep as formatted strings
     }) as any[][];
     
     // Smart header detection for Excel
@@ -409,36 +712,64 @@ async function parseDocument(content: string | ArrayBuffer, fileName: string) {
  * Intelligently find the actual data header row from Excel rows (array of arrays)
  */
 function findDataHeaderFromRows(rows: any[][]): { headers: string[]; headerIndex: number } {
+  console.log(`🔍 Header detection: analyzing ${Math.min(rows.length, 20)} rows...`);
+  
   for (let i = 0; i < Math.min(rows.length, 20); i++) {
     const row = rows[i];
-    if (!row || row.length === 0) continue;
+    if (!row || row.length === 0) {
+      console.log(`   Row ${i + 1}: empty, skipping`);
+      continue;
+    }
     
-    // Convert row to string for analysis
-    const rowText = row.join(' ').toLowerCase();
+    // Convert row cells to individual lowercase strings for matching
+    const cellsLower = row.map((cell: any) => String(cell || '').toLowerCase().trim());
     
-    // Look for common column headers that indicate actual data
+    // Look for common column headers - be flexible with matching
     const dataIndicators = [
-      'sku', 'oem', 'item', 'product', 'description', 
-      'quantity', 'qty', 'price', 'cost', 'amount',
-      'part', 'number', 'model', 'uom'
+      'date', 'sku', 'oem', 'item', 'product', 'description', 'desc',
+      'quantity', 'qty', 'price', 'cost', 'amount', 'total',
+      'part', 'number', 'model', 'uom', 'name', 'po', 'order'
     ];
     
-    const hasMultipleIndicators = dataIndicators.filter(indicator => 
-      rowText.includes(indicator)
-    ).length >= 3;
+    // Check how many cells contain these indicators
+    const matchCount = cellsLower.filter(cell => 
+      dataIndicators.some(indicator => cell === indicator || cell.includes(indicator))
+    ).length;
     
-    if (hasMultipleIndicators) {
-      console.log(`✓ Found data header at row ${i + 1}`);
+    console.log(`   Row ${i + 1}: ${matchCount} header keywords found, first 8: [${row.slice(0, 8).join(', ')}]`);
+    
+    // If we find 2+ header keywords, it's likely a header row (regardless of numeric content)
+    // Lowered from 3 to 2 to handle files with minimal but clear headers like "Part Number, Description"
+    if (matchCount >= 2) {
+      console.log(`✓ Found data header at row ${i + 1} (${matchCount} header keywords)`);
       const headers = row.map((cell: any) => cell?.toString().trim() || '');
+      console.log(`📍 Headers: ${JSON.stringify(headers.slice(0, 10))}`);
       return { headers, headerIndex: i };
     }
   }
   
-  // Fallback to first non-empty row
-  console.log('⚠️ Using first row as header (no clear header found)');
+  // Fallback: No headers found, use first data row and create synthetic column names
+  console.log('⚠️ No header keywords found - file may not have headers');
+  
+  // Use first row with data
+  const firstDataRow = rows.find(r => r && r.filter((c: any) => String(c || '').trim().length > 0).length >= 3);
+  
+  if (firstDataRow) {
+    const numCols = firstDataRow.length;
+    // Create synthetic headers based on common patterns: Col1, Col2, etc.
+    const syntheticHeaders = Array.from({ length: numCols }, (_, i) => `Column_${i + 1}`);
+    console.log(`📍 Creating synthetic headers for ${numCols} columns: ${JSON.stringify(syntheticHeaders.slice(0, 10))}`);
+    console.log(`📍 First data row: ${JSON.stringify(firstDataRow.slice(0, 10))}`);
+    
+    // Return with headerIndex: -1 to indicate no actual header row (start from row 0)
+    return { headers: syntheticHeaders, headerIndex: -1 };
+  }
+  
+  // Last resort: use first row as both headers and data 
   const firstRow = rows[0] || [];
-  const headers = firstRow.map((cell: any) => cell?.toString().trim() || '');
-  return { headers, headerIndex: 0 };
+  const headers = firstRow.map((cell: any) => cell?.toString().trim() || `Column_${rows[0].indexOf(cell) + 1}`);
+  console.log(`📍 Last resort - using first row: ${JSON.stringify(headers.slice(0, 10))}`);
+  return { headers, headerIndex: -1 };
 }
 
 /**
@@ -502,34 +833,92 @@ function parseCSVLine(line: string): string[] {
  * Extract product info from row with intelligent multi-column detection
  */
 function extractProductInfo(row: Record<string, string>, headers: string[]) {
-  // Find ALL relevant columns using multiple strategies
-  const productNameCol = headers.find(h => 
-    /item\s*description|product\s*name|description|item|product/i.test(h)
-  );
+  // Check if we're using synthetic headers (Column_1, Column_2, etc.)
+  const usingSyntheticHeaders = headers.some(h => /^Column_\d+$/i.test(h));
   
-  // Look for multiple SKU-like columns (Staples SKU, OEM Number, Part Number, etc.)
-  const skuColumns = headers.filter(h => 
-    /sku|oem|part\s*number|part\s*#|model|catalog/i.test(h)
-  );
+  let productNameCol, skuColumns, qtyCol, priceCol;
   
-  // Find quantity column - be very specific to avoid wrong columns
-  const qtyCol = headers.find(h => {
-    const lower = h.toLowerCase().trim();
-    // Exact matches first
-    if (lower === 'qty' || lower === 'quantity') return true;
-    // Exclude columns with 'sell', 'uom', 'in' to avoid "QTY in Sell UOM"
-    if (/sell|uom/i.test(h)) return false;
-    // Then check patterns
-    return /^qty$|^quantity$/i.test(lower);
-  });
+  if (usingSyntheticHeaders) {
+    // Position-based detection: analyze the actual data to find columns
+    console.log('   Using position-based column detection (no headers)');
+    
+    // Convert headers to array for easier indexing
+    const values = headers.map(h => row[h]);
+    
+    // Look for SKU column: typically short alphanumeric codes (5-15 chars, has letters and numbers)
+    const skuIdx = values.findIndex(v => {
+      const s = String(v || '').trim();
+      return s.length >= 3 && s.length <= 20 && /[A-Z]/i.test(s) && (/\d/.test(s) || /^M-/.test(s));
+    });
+    
+    // Look for description: typically longer text with spaces
+    const descIdx = values.findIndex(v => {
+      const s = String(v || '').trim();
+      return s.length > 15 && /\s/.test(s);
+    });
+    
+    // Look for quantity: small numbers (1-999 typically)
+    const qtyIdx = values.findIndex(v => {
+      const s = String(v || '').trim();
+      const num = parseFloat(s.replace(/[^0-9.]/g, ''));
+      return !isNaN(num) && num > 0 && num < 10000 && s.length <= 6;
+    });
+    
+    // Look for price: numbers with decimals or $ signs
+    const priceIdx = values.findIndex((v, i) => {
+      if (i === qtyIdx) return false; // Skip qty column
+      const s = String(v || '').trim();
+      return /\$|\./.test(s) || (parseFloat(s.replace(/[^0-9.]/g, '')) > 10);
+    });
+    
+    if (skuIdx >= 0) skuColumns = [headers[skuIdx]];
+    if (descIdx >= 0) productNameCol = headers[descIdx];
+    if (qtyIdx >= 0) qtyCol = headers[qtyIdx];
+    if (priceIdx >= 0) priceCol = headers[priceIdx];
+    
+    console.log(`   Detected: SKU=col${skuIdx+1}, Desc=col${descIdx+1}, Qty=col${qtyIdx+1}, Price=col${priceIdx+1}`);
+  }
   
-  const priceCol = headers.find(h => {
-    const lower = h.toLowerCase().trim();
-    // Exact matches for common price columns
-    if (lower === 'sale' || lower === 'price' || lower === 'unit price') return true;
-    // Pattern match excluding totals
-    return /(unit\s*price|price|cost|amount|sale)/i.test(h) && !/total|extended/i.test(h);
-  });
+  // If not using synthetic headers OR position detection failed, use header-name-based detection
+  if (!productNameCol) {
+    // Priority: "Product Description" > "Item Description" > "Description"
+    productNameCol = headers.find(h => 
+      /product\s*description|item\s*description|product\s*name/i.test(h)
+    ) || headers.find(h => 
+      /^description$/i.test(h.trim()) || /^item$/i.test(h.trim()) || /^product$/i.test(h.trim())
+    );
+  }
+  
+  if (!skuColumns || skuColumns.length === 0) {
+    // Look for multiple SKU-like columns
+    // Include "Wholesaler Product Code", "Depot Product Code" (as backup), OEM, Part Number, etc.
+    skuColumns = headers.filter(h => 
+      /wholesaler.*product.*code|wholesaler.*code|depot.*product.*code|sku|oem|part\s*number|part\s*#|model|catalog/i.test(h)
+    );
+  }
+  
+  if (!qtyCol) {
+    // Find quantity column - handle "Qty Sold", "Qty", "Quantity"
+    qtyCol = headers.find(h => {
+      const lower = h.toLowerCase().trim();
+      // Exact matches first (including "Qty Sold")
+      if (lower === 'qty' || lower === 'quantity' || lower === 'qty sold' || lower === 'quantity sold') return true;
+      // Exclude columns with 'sell', 'uom', 'in' to avoid "QTY in Sell UOM"
+      if (/sell\s*uom|in\s*sell/i.test(h)) return false;
+      // Then check patterns
+      return /^qty|^quantity|qty\s*sold|quantity\s*sold/i.test(lower);
+    });
+  }
+  
+  if (!priceCol) {
+    priceCol = headers.find(h => {
+      const lower = h.toLowerCase().trim();
+      // Exact matches for common price columns
+      if (lower === 'sale' || lower === 'price' || lower === 'unit price' || lower === 'unit cost') return true;
+      // Pattern match excluding totals and IDs
+      return /(unit\s*price|unit\s*cost|price|cost|amount|sale)/i.test(h) && !/total|extended|supplier\s*id/i.test(h);
+    });
+  }
 
   // Need at least a product name or SKU
   const productName = productNameCol ? row[productNameCol] : '';
@@ -545,10 +934,17 @@ function extractProductInfo(row: Record<string, string>, headers: string[]) {
     return null;
   }
 
-  // Extract SKU (prefer OEM number, then Staples SKU, then any SKU)
-  const oemCol = headers.find(h => /oem/i.test(h));
+  // Extract SKU with priority: OEM > Wholesaler Code > Staples SKU > Depot Code
+  const oemCol = headers.find(h => /oem|part\s*number|part\s*#/i.test(h));
+  const wholesalerCol = headers.find(h => /wholesaler.*product.*code|wholesaler.*code/i.test(h));
   const staplesSkuCol = headers.find(h => /staples.*sku/i.test(h));
-  const primarySku = (oemCol && row[oemCol]) || (staplesSkuCol && row[staplesSkuCol]) || skus[0] || '';
+  const depotCol = headers.find(h => /depot.*product.*code|depot.*code/i.test(h));
+  
+  const primarySku = (oemCol && row[oemCol]) || 
+                     (wholesalerCol && row[wholesalerCol]) || 
+                     (staplesSkuCol && row[staplesSkuCol]) || 
+                     (depotCol && row[depotCol]) || 
+                     skus[0] || '';
   
   // Get all SKUs for matching attempts
   const allSkus = skus.filter(s => s && s.length > 0);
@@ -558,6 +954,11 @@ function extractProductInfo(row: Record<string, string>, headers: string[]) {
 
   let quantity = parseInt(quantityStr) || 1;
   let unitPrice = parseFloat(priceStr) || 0;
+  
+  // Log warning if no price column found
+  if (!priceCol && unitPrice === 0) {
+    console.log(`⚠️ No price column found - using $0.00 for "${productName}"`);
+  }
   
   // Validation: Reject obviously wrong values (likely wrong column)
   // Max reasonable quantity for a single order line: 10,000 units
@@ -596,7 +997,7 @@ function extractProductInfo(row: Record<string, string>, headers: string[]) {
  */
 async function matchProducts(items: any[], jobId: string, startOffset = 0) {
   console.log(`🔍 Matching ${items.length} products (offset ${startOffset})...`);
-  const BATCH_SIZE = 50; // Conservative batch size (50 concurrent operations)
+  const BATCH_SIZE = 25; // Conservative batch size (25 concurrent operations for safety)
   const matched: any[] = [];
 
   // Process items in batches for efficiency
@@ -738,37 +1139,14 @@ Respond with ONLY a JSON object in this exact format:
   "search_query": "best search terms for database"
 }`;
 
-    // Try GPT-5-mini first, with fallback to GPT-4o-mini if not available
-    let response;
-    try {
-      response = await openai.chat.completions.create({
-        model: 'gpt-5-mini', // Preferred: Fast and cheap for simple parsing
-        messages: [{ role: 'user', content: prompt }],
-        // Note: GPT-5 doesn't support temperature parameter, uses default of 1
-        reasoning_effort: 'low', // Use low reasoning for fast, consistent extraction
-        max_completion_tokens: 200,
-        response_format: { type: 'json_object' }
-      });
-    } catch (modelError: any) {
-      // Fallback to gpt-4o-mini if gpt-5-mini isn't available or if there's a parameter error
-      const shouldFallback = 
-        modelError?.error?.code === 'model_not_found' || 
-        modelError?.status === 404 ||
-        modelError?.status === 400; // Catch parameter errors too
-      
-      if (shouldFallback) {
-        console.log('    ⚠️ gpt-5-mini not available or parameter error, falling back to gpt-4o-mini');
-        response = await openai.chat.completions.create({
-          model: 'gpt-4o-mini', // Fallback model
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.1, // gpt-4o-mini supports temperature
-          max_completion_tokens: 200,
-          response_format: { type: 'json_object' }
-        });
-      } else {
-        throw modelError;
-      }
-    }
+    // Use gpt-4o-mini as specified by user requirements
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1, // Low temperature for consistent extraction
+      max_completion_tokens: 200,
+      response_format: { type: 'json_object' }
+    });
 
     const parsed = JSON.parse(response.choices[0].message.content || '{}');
     console.log(`      AI extracted:`, parsed);
@@ -858,35 +1236,63 @@ async function fuzzySKUMatch(sku: string) {
   if (!sku || sku.length < 2) return null;
 
   // Normalize SKU: uppercase, remove spaces/dashes
-  const normalizedSku = sku.trim().toUpperCase().replace(/[\s\-_]/g, '');
+  let normalizedSku = sku.trim().toUpperCase().replace(/[\s\-_]/g, '');
 
-  // Try ILIKE search (case-insensitive pattern match)
-  const { data, error } = await supabase
-    .from('master_products')
-    .select('*')
-    .ilike('sku', `%${normalizedSku}%`)
-    .eq('active', true)
-    .limit(5);
+  // Strip common manufacturer prefixes (M-, M-HEW, M-LEX, M-BRT, etc.)
+  // These are OEM part number prefixes in user files
+  const prefixPatterns = [
+    /^MHEW/,  // M-HEW (HP)
+    /^MLEX/,  // M-LEX (Lexmark)
+    /^MBRT/,  // M-BRT (Brother)
+    /^MCAN/,  // M-CAN (Canon)
+    /^MEPS/,  // M-EPS (Epson)
+    /^MXER/,  // M-XER (Xerox)
+    /^M/      // Generic M- prefix (must be last)
+  ];
 
-  if (!error && data && data.length > 0) {
-    // Find best match by comparing normalized SKUs
-    for (const product of data) {
-      const productSkuNorm = product.sku.toUpperCase().replace(/[\s\-_]/g, '');
-      if (productSkuNorm === normalizedSku) {
-        return {
-          product,
-          score: 0.95,
-          method: 'fuzzy_sku'
-        };
-      }
+  let strippedSku = normalizedSku;
+  for (const pattern of prefixPatterns) {
+    if (pattern.test(normalizedSku)) {
+      strippedSku = normalizedSku.replace(pattern, '');
+      break;
     }
-    
-    // Return first partial match if no exact normalized match
-    return {
-      product: data[0],
-      score: 0.85,
-      method: 'fuzzy_sku'
-    };
+  }
+
+  // Try both original and stripped versions
+  const skusToTry = [normalizedSku];
+  if (strippedSku !== normalizedSku) {
+    skusToTry.push(strippedSku);
+  }
+
+  for (const searchSku of skusToTry) {
+    // Try ILIKE search (case-insensitive pattern match)
+    const { data, error } = await supabase
+      .from('master_products')
+      .select('*')
+      .ilike('sku', `%${searchSku}%`)
+      .eq('active', true)
+      .limit(5);
+
+    if (!error && data && data.length > 0) {
+      // Find best match by comparing normalized SKUs
+      for (const product of data) {
+        const productSkuNorm = product.sku.toUpperCase().replace(/[\s\-_]/g, '');
+        if (productSkuNorm === searchSku) {
+          return {
+            product,
+            score: 0.95,
+            method: 'fuzzy_sku'
+          };
+        }
+      }
+      
+      // Return first partial match if no exact normalized match
+      return {
+        product: data[0],
+        score: 0.85,
+        method: 'fuzzy_sku'
+      };
+    }
   }
 
   return null;
@@ -1067,9 +1473,10 @@ async function saveBatchItems(items: any[], jobId: string) {
 
 /**
  * Calculate cost and environmental savings
+ * UPDATED: Uses normalized prices and CPP-based higher-yield optimization
  */
 async function calculateSavings(matchedItems: any[], jobId: string) {
-  console.log('💰 Calculating savings...');
+  console.log('💰 Calculating savings with CPP-based optimization...');
 
   let totalCurrentCost = 0;
   let totalOptimizedCost = 0;
@@ -1098,98 +1505,234 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
     const matchedProduct = item.matched_product;
     
     // Check if we have required data for savings calculation
-    const hasUnitPrice = matchedProduct.unit_price && matchedProduct.unit_price > 0;
+    // Check BOTH ase_unit_price and unit_price (they're usually the same, use either)
+    // FALLBACK: Use cost if no ASE pricing available
+    const hasAsePrice = (matchedProduct.ase_unit_price && matchedProduct.ase_unit_price > 0) ||
+                        (matchedProduct.unit_price && matchedProduct.unit_price > 0) ||
+                        (matchedProduct.cost && matchedProduct.cost > 0);
     const hasPageYield = matchedProduct.page_yield && matchedProduct.page_yield > 0;
-    const hasUserPrice = item.unit_price && item.unit_price > 0;
     
-    if (!hasUnitPrice || !hasPageYield) {
-      // Skip items without cost or page_yield - can't calculate savings
-      const currentCost = item.total_price || 0;
+    // Get the ASE price (use whichever field has a value, prioritize ase_unit_price > unit_price > cost)
+    const asePrice = (matchedProduct.ase_unit_price && matchedProduct.ase_unit_price > 0) 
+      ? matchedProduct.ase_unit_price 
+      : (matchedProduct.unit_price && matchedProduct.unit_price > 0)
+        ? matchedProduct.unit_price
+        : matchedProduct.cost || 0;
+    
+    // FALLBACK PRICING LOGIC:
+    // 1. Use user's price from their file (if provided)
+    // 2. Fall back to catalog's list_price (partner list price)
+    // 3. Fall back to ASE price * 1.35 (assume ~35% markup as typical retail)
+    let effectiveUserPrice = item.unit_price && item.unit_price > 0 
+      ? item.unit_price 
+      : matchedProduct.list_price && matchedProduct.list_price > 0
+        ? matchedProduct.list_price
+        : asePrice * 1.35;
+    
+    const priceSource = item.unit_price > 0 
+      ? 'user_file' 
+      : matchedProduct.list_price > 0 
+        ? 'partner_list_price'
+        : 'estimated';
+    
+    // If no ASE price at all, we can't calculate any savings
+    if (!hasAsePrice) {
+      const currentCost = effectiveUserPrice * item.quantity;
       totalCurrentCost += currentCost;
       totalOptimizedCost += currentCost;
       
       breakdown.push({
         ...item,
         savings: 0,
-        recommendation: 'Insufficient data for savings calculation'
+        recommendation: 'No ASE pricing available'
       });
       itemsSkipped++;
-      console.log(`  ⊘ Skipped (missing data): ${item.raw_product_name} - unit_price: ${hasUnitPrice ? '✓' : '✗'}, page_yield: ${hasPageYield ? '✓' : '✗'}`);
+      console.log(`  ⊘ Skipped (no ASE price): ${item.raw_product_name}`);
       continue;
     }
 
     // We have enough data - analyze this item
     itemsAnalyzed++;
-    const currentCost = item.total_price || 0;
+    const currentCost = effectiveUserPrice * item.quantity;
     totalCurrentCost += currentCost;
 
-    // Calculate cost per page for comparison
-    const userCostPerPage = hasUserPrice && hasPageYield 
-      ? item.unit_price / matchedProduct.page_yield 
-      : null;
-    const ourCostPerPage = matchedProduct.unit_price / matchedProduct.page_yield;
+    // Calculate CPP for matched product (using normalized ASE price) - only if we have page yield
+    const matchedCPP = hasPageYield ? calculateCostPerPage(asePrice, matchedProduct.page_yield) : null;
+    const userCPP = hasPageYield ? calculateCostPerPage(effectiveUserPrice, matchedProduct.page_yield) : null;
     
     console.log(`  📊 Analyzing: ${item.raw_product_name}`);
-    console.log(`     User paying: $${item.unit_price}/unit, Cost/page: $${userCostPerPage?.toFixed(4) || 'N/A'}`);
-    console.log(`     Our price: $${matchedProduct.unit_price}/unit (${matchedProduct.page_yield} pages), Cost/page: $${ourCostPerPage.toFixed(4)}`);
+    console.log(`     User paying: $${effectiveUserPrice.toFixed(2)}/unit (${priceSource}), CPP: ${userCPP ? '$' + userCPP.toFixed(4) : 'N/A (no page yield)'}`);
+    console.log(`     ASE price: $${asePrice}/unit${matchedProduct.page_yield ? ` (${matchedProduct.page_yield} pages)` : ''}, CPP: ${matchedCPP ? '$' + matchedCPP.toFixed(4) : 'N/A'}`);
 
-    // Find better alternatives (larger sizes, bulk pricing)
-    const recommendation = await findBetterAlternative(item, matchedProduct);
+    // STEP 1: Calculate basic price savings (same product, ASE price)
+    const basicSavingsPerUnit = effectiveUserPrice - asePrice;
+    const basicTotalSavings = basicSavingsPerUnit * item.quantity;
+    const basicOptimizedCost = asePrice * item.quantity;
 
-    if (recommendation) {
-      const optimizedCost = recommendation.total_cost;
-      const savings = currentCost - optimizedCost;
+    console.log(`     💵 Basic savings (using ASE price): $${basicTotalSavings.toFixed(2)} ($${basicSavingsPerUnit.toFixed(2)}/unit)`);
 
-      totalOptimizedCost += optimizedCost;
-      totalSavings += savings;
+    // STEP 2: Try to find higher-yield alternative (only if we have page yield data)
+    let higherYieldRec = null;
+    if (hasPageYield && matchedProduct.family_series) {
+      higherYieldRec = await suggestHigherYield(
+        matchedProduct,
+        item.quantity,
+        effectiveUserPrice,  // Use effective price (user price or fallback)
+        { monthlyPages: 1000, horizonMonths: 12 }
+      );
+    }
 
-      if (savings > 0) {
-        itemsWithSavings++;
-        console.log(`     💰 Savings: $${savings.toFixed(2)} (${((savings/currentCost)*100).toFixed(1)}%)`);
+    // STEP 3: Use whichever option gives better savings
+    if (higherYieldRec) {
+      // Calculate actual savings using effective price (handles missing user prices)
+      const userCurrentTotal = item.quantity * effectiveUserPrice;
+      const optimizedCost = higherYieldRec.quantityNeeded * higherYieldRec.recommendedPrice;
+      const higherYieldSavings = userCurrentTotal - optimizedCost;
+
+      // Compare: higher-yield savings vs basic savings
+      const useHigherYield = higherYieldSavings > basicTotalSavings;
+
+      if (useHigherYield) {
+        totalOptimizedCost += optimizedCost;
+        totalSavings += higherYieldSavings;
+
+        if (higherYieldSavings > 0) {
+          itemsWithSavings++;
+          console.log(`     💰 Higher-Yield Savings: $${higherYieldSavings.toFixed(2)} (${((higherYieldSavings/userCurrentTotal)*100).toFixed(1)}%) - BETTER than basic $${basicTotalSavings.toFixed(2)}`);
+          console.log(`     📈 CPP improvement: $${higherYieldRec.cppCurrent.toFixed(4)} → $${higherYieldRec.cppRecommended.toFixed(4)}`);
+        }
+
+        // Environmental impact
+        const cartridgesSavedHere = item.quantity - higherYieldRec.quantityNeeded;
+        if (cartridgesSavedHere > 0) {
+          cartridgesSaved += cartridgesSavedHere;
+          const co2PerCartridge = matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5;
+          co2Reduced += cartridgesSavedHere * co2PerCartridge;
+        }
+
+        // Update database with capped values
+        const MAX_DECIMAL = 99999999.99;
+        const capValue = (val: number) => Math.min(Math.max(val || 0, 0), MAX_DECIMAL);
+        
+        await supabase
+          .from('order_items_extracted')
+          .update({
+            recommended_product_id: higherYieldRec.recommended.id,
+            recommended_quantity: higherYieldRec.quantityNeeded,
+            recommended_total_cost: capValue(optimizedCost),
+            cost_savings: capValue(higherYieldSavings),
+            cost_savings_percentage: Math.min(Math.max((higherYieldSavings / userCurrentTotal) * 100, 0), 100),
+            savings_reason: higherYieldRec.reason.substring(0, 500),
+            recommendation_type: 'larger_size',
+            environmental_savings: {
+              cartridges_saved: Math.max(0, cartridgesSavedHere),
+              co2_reduced: Math.max(0, cartridgesSavedHere * (matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5))
+            }
+          })
+          .eq('processing_job_id', jobId)
+          .eq('raw_product_name', item.raw_product_name);
+
+        breakdown.push({
+          ...item,
+          recommendation: {
+            product: higherYieldRec.recommended,
+            quantity: higherYieldRec.quantityNeeded,
+            total_cost: optimizedCost,
+            cartridges_saved: cartridgesSavedHere,
+            cost_per_page: higherYieldRec.cppRecommended,
+            reason: higherYieldRec.reason,
+            type: 'larger_size'
+          },
+          savings: higherYieldSavings
+        });
+      } else {
+        // Basic savings is better - use ASE price for same product
+        totalOptimizedCost += basicOptimizedCost;
+        totalSavings += basicTotalSavings;
+
+        if (basicTotalSavings > 0) {
+          itemsWithSavings++;
+          console.log(`     💰 Using Basic Price Savings: $${basicTotalSavings.toFixed(2)} (${((basicTotalSavings/currentCost)*100).toFixed(1)}%) - BETTER than higher-yield $${higherYieldSavings.toFixed(2)}`);
+        }
+
+        // Update database with basic savings
+        const MAX_DECIMAL = 99999999.99;
+        const capValue = (val: number) => Math.min(Math.max(val || 0, 0), MAX_DECIMAL);
+        
+        await supabase
+          .from('order_items_extracted')
+          .update({
+            recommended_product_id: matchedProduct.id, // Same product, just better price
+            recommended_quantity: item.quantity,
+            recommended_total_cost: capValue(basicOptimizedCost),
+            cost_savings: capValue(basicTotalSavings),
+            cost_savings_percentage: Math.min(Math.max((basicTotalSavings / currentCost) * 100, 0), 100),
+            savings_reason: `Save $${basicSavingsPerUnit.toFixed(2)}/unit by purchasing at ASE price`,
+            recommendation_type: 'better_price'
+          })
+          .eq('processing_job_id', jobId)
+          .eq('raw_product_name', item.raw_product_name);
+
+        breakdown.push({
+          ...item,
+          recommendation: {
+            product: matchedProduct,
+            quantity: item.quantity,
+            total_cost: basicOptimizedCost,
+            reason: `Same product at ASE price: $${asePrice.toFixed(2)}/unit (save $${basicSavingsPerUnit.toFixed(2)}/unit)`,
+            type: 'better_price'
+          },
+          savings: basicTotalSavings
+        });
       }
-
-      // Environmental impact
-      if (recommendation.cartridges_saved > 0) {
-        cartridgesSaved += recommendation.cartridges_saved;
-        const co2PerCartridge = matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5;
-        co2Reduced += recommendation.cartridges_saved * co2PerCartridge;
-      }
-
-      // Update database with capped values
-      const MAX_DECIMAL = 99999999.99;
-      const capValue = (val: number) => Math.min(Math.max(val || 0, 0), MAX_DECIMAL);
-      
-      await supabase
-        .from('order_items_extracted')
-        .update({
-          recommended_product_id: recommendation.product.id,
-          recommended_quantity: recommendation.quantity || 0,
-          recommended_total_cost: capValue(optimizedCost),
-          cost_savings: capValue(savings),
-          cost_savings_percentage: Math.min(Math.max((savings / currentCost) * 100, 0), 100),
-          savings_reason: recommendation.reason?.substring(0, 500) || null,
-          recommendation_type: recommendation.type,
-          environmental_savings: {
-            cartridges_saved: Math.max(0, recommendation.cartridges_saved || 0),
-            co2_reduced: Math.max(0, (recommendation.cartridges_saved || 0) * (matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5))
-          }
-        })
-        .eq('processing_job_id', jobId)
-        .eq('raw_product_name', item.raw_product_name);
-
-      breakdown.push({
-        ...item,
-        recommendation,
-        savings
-      });
     } else {
-      totalOptimizedCost += currentCost;
-      breakdown.push({
-        ...item,
-        savings: 0,
-        recommendation: 'Already optimized'
-      });
-      console.log(`     ✓ Already optimized (no better alternative found)`);
+      // No higher-yield option - use basic price savings (if any)
+      if (basicTotalSavings > 0) {
+        totalOptimizedCost += basicOptimizedCost;
+        totalSavings += basicTotalSavings;
+        itemsWithSavings++;
+
+        console.log(`     💰 Basic Price Savings: $${basicTotalSavings.toFixed(2)} (${((basicTotalSavings/currentCost)*100).toFixed(1)}%)`);
+
+        // Update database with basic savings
+        const MAX_DECIMAL = 99999999.99;
+        const capValue = (val: number) => Math.min(Math.max(val || 0, 0), MAX_DECIMAL);
+        
+        await supabase
+          .from('order_items_extracted')
+          .update({
+            recommended_product_id: matchedProduct.id, // Same product, just better price
+            recommended_quantity: item.quantity,
+            recommended_total_cost: capValue(basicOptimizedCost),
+            cost_savings: capValue(basicTotalSavings),
+            cost_savings_percentage: Math.min(Math.max((basicTotalSavings / currentCost) * 100, 0), 100),
+            savings_reason: `Save $${basicSavingsPerUnit.toFixed(2)}/unit by purchasing at ASE price`,
+            recommendation_type: 'better_price'
+          })
+          .eq('processing_job_id', jobId)
+          .eq('raw_product_name', item.raw_product_name);
+
+        breakdown.push({
+          ...item,
+          recommendation: {
+            product: matchedProduct,
+            quantity: item.quantity,
+            total_cost: basicOptimizedCost,
+            reason: `Same product at ASE price: $${asePrice.toFixed(2)}/unit (save $${basicSavingsPerUnit.toFixed(2)}/unit)`,
+            type: 'better_price'
+          },
+          savings: basicTotalSavings
+        });
+      } else {
+        // No savings at all (user already paying at or below ASE price)
+        totalOptimizedCost += currentCost;
+        breakdown.push({
+          ...item,
+          savings: 0,
+          recommendation: 'Already at or below ASE price'
+        });
+        console.log(`     ✓ Already at or below ASE price (no savings possible)`);
+      }
     }
   }
 
@@ -1219,114 +1762,9 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
   };
 }
 
-/**
- * Find better alternative products (larger sizes, bulk pricing)
- */
-async function findBetterAlternative(item: any, currentProduct: any) {
-  if (!currentProduct) return null;
-
-  // Skip if already XL/XXL
-  if (currentProduct.size_category && ['xl', 'xxl'].includes(currentProduct.size_category.toLowerCase())) {
-    return null;
-  }
-
-  // Already checked in calculateSavings, but double-check here
-  if (!currentProduct.page_yield || currentProduct.page_yield === 0) {
-    return null;
-  }
-
-  if (!currentProduct.unit_price || currentProduct.unit_price === 0) {
-    return null;
-  }
-
-  // OPTIMIZED: Single query for XL alternatives
-  if (currentProduct.sku) {
-    const baseSku = currentProduct.sku.replace(/A$/i, '');
-    const xlSkus = [baseSku + 'X', baseSku + 'XL', currentProduct.sku + 'XL', currentProduct.sku + 'X'];
-
-    const { data: xlProducts } = await supabase
-      .from('master_products')
-      .select('*')
-      .in('sku', xlSkus)
-      .eq('active', true)
-      .limit(1);
-
-    if (xlProducts && xlProducts.length > 0) {
-      const xlProduct = xlProducts[0];
-      
-      // Ensure XL product has required data
-      if (xlProduct.unit_price > 0 && xlProduct.page_yield > 0) {
-        const savings = calculateSavingsForAlternative(item, currentProduct, xlProduct);
-        if (savings) return savings;
-      }
-    }
-  }
-
-  return null;
-}
-
-/**
- * Calculate savings for an alternative product using cost per page comparison
- */
-function calculateSavingsForAlternative(item: any, currentProduct: any, xlProduct: any) {
-  const currentPageYield = currentProduct.page_yield || 1000;
-  const xlPageYield = xlProduct.page_yield || 2000;
-  
-  // Only recommend if XL has significantly higher yield (at least 20% more)
-  if (xlPageYield <= currentPageYield * 1.2) {
-    return null;
-  }
-  
-  // Calculate cost per page for both products
-  const currentCostPerPage = currentProduct.unit_price / currentPageYield;
-  const xlCostPerPage = xlProduct.unit_price / xlPageYield;
-  
-  // Only recommend if XL has better cost per page
-  if (xlCostPerPage >= currentCostPerPage) {
-    return null;
-  }
-  
-  // Calculate total pages user needs (based on their current order)
-  const totalPages = item.quantity * currentPageYield;
-  
-  // Calculate how many XL cartridges needed for same page count
-  const quantityNeeded = Math.ceil(totalPages / xlPageYield);
-  
-  // Calculate total costs
-  // User's current cost (what they're paying now)
-  const userCurrentTotalCost = item.total_price || (item.quantity * item.unit_price);
-  
-  // Our recommended cost (using XL product)
-  const ourRecommendedCost = quantityNeeded * xlProduct.unit_price;
-  
-  // Calculate savings
-  const costSavings = userCurrentTotalCost - ourRecommendedCost;
-  
-  // Only recommend if there are actual savings
-  if (costSavings <= 0) {
-    return null;
-  }
-  
-  const cartridgesSaved = item.quantity - quantityNeeded;
-  const savingsPercentage = (costSavings / userCurrentTotalCost) * 100;
-  
-  // Calculate cost per page savings
-  const userCostPerPage = item.unit_price && currentPageYield > 0 
-    ? item.unit_price / currentPageYield 
-    : currentCostPerPage;
-  const costPerPageSavings = userCostPerPage - xlCostPerPage;
-  
-  return {
-    product: xlProduct,
-    quantity: quantityNeeded,
-    total_cost: ourRecommendedCost,
-    cartridges_saved: Math.max(0, cartridgesSaved),
-    cost_per_page: xlCostPerPage,
-    cost_per_page_savings: costPerPageSavings,
-    reason: `Switch to ${xlProduct.size_category?.toUpperCase() || 'High Yield'} ${xlProduct.product_name} (${xlPageYield.toLocaleString()} pages vs ${currentPageYield.toLocaleString()} pages). Cost per page: $${xlCostPerPage.toFixed(4)} vs current $${userCostPerPage.toFixed(4)}. Saves ${cartridgesSaved} cartridges and $${costSavings.toFixed(2)} (${savingsPercentage.toFixed(1)}% savings)`,
-    type: 'larger_size'
-  };
-}
+// OLD FUNCTION REMOVED: findBetterAlternative and calculateSavingsForAlternative
+// These have been replaced by suggestHigherYield() which uses
+// the battle-tested CPP-based family matching approach
 
 /**
  * Generate PDF report and upload to storage

@@ -13,6 +13,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { readFileSync } from 'fs';
 import { parse } from 'csv-parse/sync';
+import * as XLSX from 'xlsx';
 import OpenAI from 'openai';
 import { config } from 'dotenv';
 
@@ -88,6 +89,16 @@ interface Product {
   replaces_products: string[];
   related_skus: string[];
   active: boolean;
+  
+  // NEW: Canonical fields for deterministic matching
+  family_series: string | null;
+  yield_class: 'standard' | 'high' | 'extra_high' | 'super_high' | null;
+  compatible_printers: string[] | null;
+  oem_vs_compatible: 'OEM' | 'reman' | 'compatible';
+  uom_std: string;
+  pack_qty_std: number;
+  ase_unit_price: number;
+  inventory_status: 'in_stock' | 'low' | 'oos' | null;
 }
 
 /**
@@ -131,6 +142,137 @@ function detectSizeCategory(description: string): string {
   if (lower.includes('standard') || !lower.includes('yield')) return 'standard';
   
   return 'standard';
+}
+
+/**
+ * Detect yield class (maps size_category to yield_class)
+ */
+function detectYieldClass(description: string, sizeCategory: string): 'standard' | 'high' | 'extra_high' | 'super_high' {
+  const lower = description.toLowerCase();
+  
+  // Super high yield (XXXL)
+  if (lower.includes('super high') || lower.includes('ultra high') || lower.includes('xxxl')) {
+    return 'super_high';
+  }
+  
+  // Extra high yield (XXL)
+  if (lower.includes('extra high') || lower.includes('xxl') || sizeCategory === 'xxl') {
+    return 'extra_high';
+  }
+  
+  // High yield (XL)
+  if (lower.includes('high yield') || lower.includes('hi-yield') || lower.includes('xl') || sizeCategory === 'xl') {
+    return 'high';
+  }
+  
+  // Standard
+  return 'standard';
+}
+
+/**
+ * Extract family/series from brand, model, and description
+ * Examples: "Brother TN7xx", "HP 64", "Canon PG-245", "Epson 288"
+ */
+function extractFamilySeries(brand: string, model: string, sku: string, description: string): string | null {
+  if (!brand) return null;
+  
+  // Clean up brand name
+  const cleanBrand = brand.trim().toUpperCase();
+  
+  // Try to extract series from model number
+  if (model && model.length > 1) {
+    // Remove size suffixes (XL, XXL, etc.) to get base series
+    const baseModel = model
+      .replace(/[-_\s]/g, '')
+      .replace(/X+L$/i, '')
+      .replace(/(HIGH|HI|EXTRA|SUPER).*YIELD/i, '')
+      .trim();
+    
+    if (baseModel.length > 0) {
+      // For numeric series, generalize (e.g., "TN760" → "TN7xx")
+      if (/\d{3,}/.test(baseModel)) {
+        const generalized = baseModel.replace(/\d+$/, (match) => {
+          // Keep first digit(s), replace rest with 'x'
+          if (match.length >= 3) {
+            return match[0] + 'x'.repeat(match.length - 1);
+          }
+          return match;
+        });
+        return `${cleanBrand} ${generalized}`;
+      }
+      
+      // For alphanumeric series, use as-is (e.g., "PG-245")
+      return `${cleanBrand} ${baseModel}`;
+    }
+  }
+  
+  // Try to extract from SKU
+  if (sku && sku.length > 2) {
+    const cleanSku = sku.replace(/[-_\s]/g, '').toUpperCase();
+    // Extract letters + first few digits
+    const match = cleanSku.match(/^([A-Z]+\d{1,2})/);
+    if (match) {
+      return `${cleanBrand} ${match[1]}xx`;
+    }
+  }
+  
+  // Fallback: use brand + first word of model
+  if (model) {
+    const firstWord = model.split(/[\s\-_]/)[0];
+    return `${cleanBrand} ${firstWord}`;
+  }
+  
+  return cleanBrand;
+}
+
+/**
+ * Detect OEM vs Compatible vs Remanufactured
+ */
+function detectOemType(manufacturer: string, brand: string, description: string): 'OEM' | 'reman' | 'compatible' {
+  const combined = `${manufacturer} ${brand} ${description}`.toLowerCase();
+  
+  // Check for remanufactured keywords
+  if (combined.includes('reman') || combined.includes('remanufactured') || combined.includes('refurb')) {
+    return 'reman';
+  }
+  
+  // Check for compatible/generic keywords
+  if (combined.includes('compatible') || combined.includes('generic') || combined.includes('aftermarket')) {
+    return 'compatible';
+  }
+  
+  // Check if brand matches manufacturer (likely OEM)
+  const cleanBrand = brand.toLowerCase().trim();
+  const cleanMfr = manufacturer.toLowerCase().trim();
+  
+  if (cleanBrand && cleanMfr && (cleanMfr.includes(cleanBrand) || cleanBrand.includes(cleanMfr))) {
+    return 'OEM';
+  }
+  
+  // Known OEM brands
+  const oemBrands = ['hp', 'canon', 'brother', 'epson', 'lexmark', 'dell', 'xerox', 'samsung', 'kyocera'];
+  if (oemBrands.some(oem => combined.includes(oem))) {
+    return 'OEM';
+  }
+  
+  // Default to OEM (safer assumption)
+  return 'OEM';
+}
+
+/**
+ * Normalize UOM to standard values
+ */
+function normalizeUOM(uom: string | undefined): string {
+  if (!uom) return 'EA';
+  
+  const lower = uom.toLowerCase().trim();
+  if (lower === 'ea' || lower === 'each') return 'EA';
+  if (lower === 'bx' || lower === 'box') return 'BX';
+  if (lower === 'cs' || lower === 'case') return 'CS';
+  if (lower === 'pk' || lower === 'pack' || lower === 'package') return 'PK';
+  if (lower === 'ct' || lower === 'carton') return 'CT';
+  
+  return 'EA'; // Default to each
 }
 
 /**
@@ -237,6 +379,14 @@ function transformRow(row: any): Product | null {
     const category = detectCategory(description);
     const brand = extractBrand(manufacturer, description);
     const model = extractModel(oemNumber, description);
+    const sizeCategory = detectSizeCategory(description);
+    const yieldClass = detectYieldClass(description, sizeCategory);
+    const packQty = parseInt(row['Pack per Quantity'] || row['Pack Qty']) || 1;
+    const unitPrice = parsePrice(row['ASE Price'] || row['STAPLES PRICE']) || 0;
+    const normalizedUom = normalizeUOM(row['UOM']);
+    
+    // Calculate normalized ASE price (per-each basis)
+    const aseUnitPrice = unitPrice / Math.max(packQty, 1);
     
     const product: Product = {
       sku: oemNumber || staplesPartNumber,
@@ -244,16 +394,16 @@ function transformRow(row: any): Product | null {
       category,
       brand,
       model,
-      unit_price: parsePrice(row['ASE Price'] || row['STAPLES PRICE']) || 0,
+      unit_price: unitPrice,
       bulk_price: null, // Can be added later
       bulk_minimum: null,
-      list_price: parsePrice(row[' PARTNER LIST PRICE ']) || null,
-      cost: parsePrice(row['Clover COGS'] || row[' PARTNER COST ']) || null,
+      list_price: parsePrice(row['PARTNER LIST PRICE']) || null,
+      cost: parsePrice(row['Clover COGS'] || row['PARTNER COST']) || null,
       page_yield: parseInt(row['Clover Yield']) || null,
       color_type: detectColorType(description),
-      size_category: detectSizeCategory(description),
+      size_category: sizeCategory,
       uom: row['UOM'] || 'EA',
-      pack_quantity: parseInt(row['Pack per Quantity'] || row['Pack Qty']) || 1,
+      pack_quantity: packQty,
       co2_per_unit: calculateCO2(category),
       recyclable: true, // Default to recyclable
       manufacturer,
@@ -263,6 +413,16 @@ function transformRow(row: any): Product | null {
       replaces_products: [], // Can be populated from additional data
       related_skus: staplesPartNumber ? [staplesPartNumber] : [],
       active: true,
+      
+      // NEW: Canonical fields
+      family_series: extractFamilySeries(brand, model, oemNumber || staplesPartNumber, description),
+      yield_class: yieldClass,
+      compatible_printers: null, // Can be populated from additional data
+      oem_vs_compatible: detectOemType(manufacturer, brand, description),
+      uom_std: normalizedUom,
+      pack_qty_std: packQty,
+      ase_unit_price: aseUnitPrice,
+      inventory_status: 'in_stock', // Default to in stock
     };
     
     return product;
@@ -358,25 +518,55 @@ async function main() {
   const args = process.argv.slice(2);
   
   if (args.length === 0) {
-    console.error('❌ Please provide path to CSV file');
+    console.error('❌ Please provide path to CSV or Excel file');
     console.error('Usage: npx tsx scripts/import-master-catalog.ts path/to/catalog.csv');
+    console.error('       npx tsx scripts/import-master-catalog.ts path/to/catalog.xlsx');
     process.exit(1);
   }
   
-  const csvPath = args[0];
+  const filePath = args[0];
+  const isExcel = filePath.toLowerCase().endsWith('.xlsx') || filePath.toLowerCase().endsWith('.xls');
   
   console.log('🚀 Starting master catalog import...');
-  console.log(`📄 Reading file: ${csvPath}`);
+  console.log(`📄 Reading file: ${filePath}`);
   
-  // Read and parse CSV
-  const fileContent = readFileSync(csvPath, 'utf-8');
-  const rows = parse(fileContent, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-  });
+  let rows: any[];
   
-  console.log(`📊 Found ${rows.length} rows in CSV`);
+  if (isExcel) {
+    // Read and parse Excel file
+    console.log('📊 Parsing Excel file...');
+    const fileBuffer = readFileSync(filePath);
+    const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    console.log(`   Using sheet: ${sheetName}`);
+    
+    // Convert to JSON with headers
+    const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { 
+      header: undefined, // Use first row as headers
+      raw: false, // Convert dates and numbers to strings
+      defval: '' // Default value for empty cells
+    });
+    
+    // Normalize column names by trimming whitespace
+    rows = rawRows.map((row: any) => {
+      const normalizedRow: any = {};
+      for (const [key, value] of Object.entries(row)) {
+        normalizedRow[key.trim()] = value;
+      }
+      return normalizedRow;
+    });
+  } else {
+    // Read and parse CSV
+    console.log('📊 Parsing CSV file...');
+    const fileContent = readFileSync(filePath, 'utf-8');
+    rows = parse(fileContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+    });
+  }
+  
+  console.log(`📊 Found ${rows.length} rows`);
   
   // Transform rows to products
   console.log('🔄 Transforming data...');
