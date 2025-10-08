@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import OpenAI from 'npm:openai@4';
+import * as XLSX from 'npm:xlsx@0.18.5';
 import { generatePDFReport } from '../shared/pdf-generator.ts';
 
 const corsHeaders = {
@@ -28,6 +29,10 @@ interface ProcessingContext {
     company: string;
     email: string;
   };
+  // Chunked processing support
+  chunkIndex?: number;      // Current chunk being processed (0-based)
+  totalItems?: number;       // Total items in document
+  itemsProcessed?: number;   // Items processed so far
 }
 
 /**
@@ -55,30 +60,124 @@ async function updateProgress(
 }
 
 /**
- * Main processing orchestrator
+ * Main processing orchestrator with CHUNKED PROCESSING for large files
  */
 async function processDocument(context: ProcessingContext) {
-  console.log('🚀 Starting document processing:', context.jobId);
+  const chunkIndex = context.chunkIndex || 0;
+  const CHUNK_SIZE = 200; // Process 200 items per chunk (safe for timeout with savings calc)
+  
+  console.log(`🚀 Processing chunk ${chunkIndex + 1} for job:`, context.jobId);
 
   try {
-    // Step 1: Download and parse file (10-30%)
-    await updateProgress(context.jobId, 10, 'Downloading file...');
-    const fileContent = await downloadFile(context.fileUrl);
-    
-    await updateProgress(context.jobId, 20, 'Parsing document...');
-    const parsedData = await parseDocument(fileContent, context.fileName);
-    
-    await updateProgress(context.jobId, 30, `Extracted ${parsedData.items.length} items`);
+    // Step 1: Download and parse file (only on first chunk)
+    if (chunkIndex === 0) {
+      await updateProgress(context.jobId, 5, 'Downloading file...');
+      const fileContent = await downloadFile(context.fileUrl, context.fileName);
+      
+      await updateProgress(context.jobId, 10, 'Parsing document...');
+      const parsedData = await parseDocument(fileContent, context.fileName);
+      
+      // Store parsed items in job metadata for next chunks
+      await supabase
+        .from('processing_jobs')
+        .update({
+          metadata: {
+            total_items: parsedData.items.length,
+            headers: parsedData.headers,
+            parsed_at: new Date().toISOString()
+          }
+        })
+        .eq('id', context.jobId);
+      
+      context.totalItems = parsedData.items.length;
+      await updateProgress(context.jobId, 15, `Extracted ${parsedData.items.length} items - starting batch processing`);
+      
+      // Process first chunk
+      await processChunk(parsedData.items, 0, CHUNK_SIZE, context);
+      
+    } else {
+      // Subsequent chunks: re-download and parse to get items
+      const fileContent = await downloadFile(context.fileUrl, context.fileName);
+      const parsedData = await parseDocument(fileContent, context.fileName);
+      context.totalItems = parsedData.items.length;
+      
+      // Process this chunk
+      await processChunk(parsedData.items, chunkIndex, CHUNK_SIZE, context);
+    }
 
-    // Step 2: Match products (30-60%)
-    await updateProgress(context.jobId, 35, 'Matching products to catalog...');
-    const matchedItems = await matchProducts(parsedData.items, context.jobId);
+    // Check if more chunks needed
+    const itemsProcessed = (chunkIndex + 1) * CHUNK_SIZE;
+    const totalItems = context.totalItems || 0;
     
-    await updateProgress(context.jobId, 60, `Matched ${matchedItems.length} products`);
+    if (itemsProcessed < totalItems) {
+      // More chunks to process - invoke function again
+      const nextChunkIndex = chunkIndex + 1;
+      const progress = 15 + Math.floor((itemsProcessed / totalItems) * 45); // 15-60% for matching
+      
+      await updateProgress(
+        context.jobId, 
+        progress, 
+        `Matched ${itemsProcessed}/${totalItems} products - continuing...`
+      );
+      
+      console.log(`⏭️  Continuing with chunk ${nextChunkIndex + 1}...`);
+      
+      // Self-invoke for next chunk (with proper error handling)
+      try {
+        await invokeSelf({
+          ...context,
+          chunkIndex: nextChunkIndex,
+          itemsProcessed
+        });
+        console.log(`✅ Next chunk invoked successfully`);
+      } catch (err) {
+        console.error('❌ Failed to invoke next chunk:', err);
+        // Don't throw - let the function complete gracefully
+        // The error is already logged in processing_jobs by invokeSelf
+      }
+      
+      return { success: true, status: 'chunking', nextChunk: nextChunkIndex };
+    }
+
+    // All chunks complete - move to savings calculation
+    console.log('✅ All matching complete, calculating savings...');
+    await updateProgress(context.jobId, 60, 'All items matched! Calculating savings...');
+
+    // Get all matched items from database WITH matched product details
+    const { data: allMatchedItems, error: fetchError } = await supabase
+      .from('order_items_extracted')
+      .select(`
+        *,
+        matched_product:matched_product_id (
+          id,
+          sku,
+          product_name,
+          brand,
+          model,
+          category,
+          size_category,
+          color_type,
+          page_yield,
+          unit_price,
+          active
+        )
+      `)
+      .eq('processing_job_id', context.jobId);
+
+    if (fetchError) {
+      console.error('❌ Error fetching matched items:', fetchError);
+      throw new Error(`Failed to fetch matched items: ${fetchError.message}`);
+    }
+
+    if (!allMatchedItems || allMatchedItems.length === 0) {
+      throw new Error('No matched items found in database');
+    }
+
+    console.log(`📊 Retrieved ${allMatchedItems.length} items from database for savings calculation`);
 
     // Step 3: Calculate savings (60-80%)
     await updateProgress(context.jobId, 65, 'Analyzing savings opportunities...');
-    const savingsAnalysis = await calculateSavings(matchedItems, context.jobId);
+    const savingsAnalysis = await calculateSavings(allMatchedItems, context.jobId);
     
     await updateProgress(context.jobId, 80, 'Generating report...');
 
@@ -98,7 +197,7 @@ async function processDocument(context: ProcessingContext) {
     });
 
     console.log('✅ Processing complete:', context.jobId);
-    return { success: true };
+    return { success: true, status: 'completed' };
 
   } catch (error) {
     console.error('❌ Processing error:', error);
@@ -114,44 +213,180 @@ async function processDocument(context: ProcessingContext) {
 }
 
 /**
+ * Process a single chunk of items
+ */
+async function processChunk(
+  allItems: any[], 
+  chunkIndex: number, 
+  chunkSize: number,
+  context: ProcessingContext
+) {
+  const startIdx = chunkIndex * chunkSize;
+  const endIdx = Math.min(startIdx + chunkSize, allItems.length);
+  const chunk = allItems.slice(startIdx, endIdx);
+  
+  console.log(`📦 Processing chunk ${chunkIndex + 1}: items ${startIdx + 1}-${endIdx} of ${allItems.length}`);
+  
+  // Match products in this chunk
+  await matchProducts(chunk, context.jobId, startIdx);
+}
+
+/**
+ * Self-invoke the function for next chunk (async continuation) with retry logic
+ */
+async function invokeSelf(context: ProcessingContext, retries = 3) {
+  const functionUrl = `${supabaseUrl}/functions/v1/process-document`;
+  
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      console.log(`🔄 Invoking next chunk (attempt ${attempt}/${retries})...`);
+      
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${supabaseServiceKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          submissionId: context.submissionId,
+          _internal: true,
+          _context: context
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Self-invocation failed: ${response.status} - ${errorText}`);
+      }
+      
+      const result = await response.json();
+      console.log(`✅ Successfully invoked next chunk:`, result);
+      return result;
+      
+    } catch (error) {
+      console.error(`❌ Self-invocation attempt ${attempt} failed:`, error);
+      
+      if (attempt === retries) {
+        // On final failure, update job to show error
+        await supabase
+          .from('processing_jobs')
+          .update({
+            status: 'failed',
+            error_message: `Failed to continue processing after chunk ${context.chunkIndex}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            completed_at: new Date().toISOString()
+          })
+          .eq('id', context.jobId);
+        
+        throw error;
+      }
+      
+      // Exponential backoff: 2s, 4s, 8s
+      const delay = Math.pow(2, attempt) * 1000;
+      console.log(`⏳ Retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
+/**
  * Download file from Supabase Storage
  */
-async function downloadFile(fileUrl: string): Promise<string> {
+async function downloadFile(fileUrl: string, fileName: string): Promise<string | ArrayBuffer> {
   const response = await fetch(fileUrl);
   if (!response.ok) {
     throw new Error(`Failed to download file: ${response.statusText}`);
   }
+  
+  // Check if file is Excel format (binary)
+  const isExcel = fileName.toLowerCase().endsWith('.xlsx') || 
+                  fileName.toLowerCase().endsWith('.xls');
+  
+  if (isExcel) {
+    return await response.arrayBuffer();
+  }
+  
   return await response.text();
 }
 
 /**
  * Parse CSV/Excel document with intelligent header detection
  */
-async function parseDocument(content: string, fileName: string) {
+async function parseDocument(content: string | ArrayBuffer, fileName: string) {
   console.log('📄 Parsing document:', fileName);
 
-  // Parse CSV content
-  const lines = content.trim().split('\n');
+  // Detect file type
+  const isExcel = fileName.toLowerCase().endsWith('.xlsx') || 
+                  fileName.toLowerCase().endsWith('.xls');
   
-  // Smart header detection - find the actual data header row
-  const { headerRow, headerIndex } = findDataHeader(lines);
-  const headers = headerRow.split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-  
-  console.log('📊 Found header at row', headerIndex + 1);
-  console.log('📊 Columns:', headers);
+  let rows: any[][] = [];
+  let headers: string[] = [];
+  let headerIndex = 0;
 
-  // Parse rows starting after the header
-  const items: any[] = [];
-  for (let i = headerIndex + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.trim()) continue;
-
-    // Advanced CSV parsing (handles quoted commas)
-    const values = parseCSVLine(line);
-    const row: Record<string, string> = {};
+  if (isExcel && content instanceof ArrayBuffer) {
+    // Parse Excel file
+    console.log('📊 Parsing Excel file...');
+    const workbook = XLSX.read(content, { type: 'array' });
     
+    // Get first worksheet
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+    
+    console.log(`📊 Reading sheet: ${firstSheetName}`);
+    
+    // Convert to array of arrays
+    const rawData = XLSX.utils.sheet_to_json(worksheet, { 
+      header: 1,  // Return array of arrays
+      defval: '',  // Default value for empty cells
+      blankrows: false  // Skip blank rows
+    }) as any[][];
+    
+    // Smart header detection for Excel
+    const headerResult = findDataHeaderFromRows(rawData);
+    headerIndex = headerResult.headerIndex;
+    headers = headerResult.headers;
+    
+    // Get data rows (after header)
+    rows = rawData.slice(headerIndex + 1);
+    
+    console.log('📊 Found header at row', headerIndex + 1);
+    console.log('📊 Columns:', headers);
+    console.log(`📊 Total data rows: ${rows.length}`);
+    
+  } else if (typeof content === 'string') {
+    // Parse CSV content
+    console.log('📊 Parsing CSV file...');
+    const lines = content.trim().split('\n');
+    
+    // Smart header detection - find the actual data header row
+    const { headerRow, headerIndex: csvHeaderIndex } = findDataHeader(lines);
+    headerIndex = csvHeaderIndex;
+    headers = headerRow.split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+    
+    console.log('📊 Found header at row', headerIndex + 1);
+    console.log('📊 Columns:', headers);
+
+    // Parse rows starting after the header
+    for (let i = headerIndex + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+
+      // Advanced CSV parsing (handles quoted commas)
+      const values = parseCSVLine(line);
+      rows.push(values);
+    }
+  } else {
+    throw new Error('Invalid content type for parsing');
+  }
+
+  // Extract product information from rows
+  const items: any[] = [];
+  for (const values of rows) {
+    if (!values || values.length === 0) continue;
+    
+    // Convert row array to object
+    const row: Record<string, string> = {};
     headers.forEach((header, index) => {
-      row[header] = values[index] || '';
+      row[header] = values[index]?.toString() || '';
     });
 
     // Extract product information with intelligent column detection
@@ -161,7 +396,7 @@ async function parseDocument(content: string, fileName: string) {
     }
   }
 
-  console.log(`✅ Parsed ${items.length} items from ${lines.length - headerIndex - 1} rows`);
+  console.log(`✅ Parsed ${items.length} items from ${rows.length} rows`);
 
   return {
     items,
@@ -171,7 +406,43 @@ async function parseDocument(content: string, fileName: string) {
 }
 
 /**
- * Intelligently find the actual data header row (skips metadata/blank rows)
+ * Intelligently find the actual data header row from Excel rows (array of arrays)
+ */
+function findDataHeaderFromRows(rows: any[][]): { headers: string[]; headerIndex: number } {
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+    
+    // Convert row to string for analysis
+    const rowText = row.join(' ').toLowerCase();
+    
+    // Look for common column headers that indicate actual data
+    const dataIndicators = [
+      'sku', 'oem', 'item', 'product', 'description', 
+      'quantity', 'qty', 'price', 'cost', 'amount',
+      'part', 'number', 'model', 'uom'
+    ];
+    
+    const hasMultipleIndicators = dataIndicators.filter(indicator => 
+      rowText.includes(indicator)
+    ).length >= 3;
+    
+    if (hasMultipleIndicators) {
+      console.log(`✓ Found data header at row ${i + 1}`);
+      const headers = row.map((cell: any) => cell?.toString().trim() || '');
+      return { headers, headerIndex: i };
+    }
+  }
+  
+  // Fallback to first non-empty row
+  console.log('⚠️ Using first row as header (no clear header found)');
+  const firstRow = rows[0] || [];
+  const headers = firstRow.map((cell: any) => cell?.toString().trim() || '');
+  return { headers, headerIndex: 0 };
+}
+
+/**
+ * Intelligently find the actual data header row (skips metadata/blank rows) - CSV version
  */
 function findDataHeader(lines: string[]): { headerRow: string; headerIndex: number } {
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
@@ -321,77 +592,236 @@ function extractProductInfo(row: Record<string, string>, headers: string[]) {
 }
 
 /**
- * Match products to master catalog using comprehensive multi-tier strategy
+ * Match products to master catalog - OPTIMIZED FOR CHUNKED PROCESSING
  */
-async function matchProducts(items: any[], jobId: string) {
-  console.log('🔍 Matching products to catalog...');
+async function matchProducts(items: any[], jobId: string, startOffset = 0) {
+  console.log(`🔍 Matching ${items.length} products (offset ${startOffset})...`);
+  const BATCH_SIZE = 50; // Conservative batch size (50 concurrent operations)
   const matched: any[] = [];
 
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    console.log(`  Matching ${i + 1}/${items.length}: ${item.raw_product_name} [SKU: ${item.raw_sku}]`);
-
-    let match: { product: any; score: number; method: string } | null = null;
+  // Process items in batches for efficiency
+  for (let batchStart = 0; batchStart < items.length; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, items.length);
+    const batch = items.slice(batchStart, batchEnd);
     
-    // Tier 1: Try exact match on ALL available SKUs
-    if (item.all_skus && item.all_skus.length > 0) {
-      for (const sku of item.all_skus) {
-        match = await exactSKUMatch(sku);
-        if (match) {
-          console.log(`    ✓ Matched via SKU: ${sku}`);
-          break;
-        }
+    console.log(`📦 Batch ${Math.floor(batchStart/BATCH_SIZE) + 1}/${Math.ceil(items.length/BATCH_SIZE)} (${batchStart + 1}-${batchEnd})`);
+
+    // Match all items in batch concurrently
+    const batchPromises = batch.map(async (item, idx) => {
+      const globalIdx = startOffset + batchStart + idx;
+      try {
+        const matchResult = await matchSingleProduct(item, globalIdx + 1, 0);
+        return matchResult;
+      } catch (error) {
+        console.error(`Error matching item ${globalIdx + 1}:`, error);
+        return {
+          ...item,
+          matched_product: null,
+          match_score: 0,
+          match_method: 'error',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
       }
-    }
+    });
+
+    const batchResults = await Promise.all(batchPromises);
+    matched.push(...batchResults);
+
+    // Save batch to database in bulk
+    await saveBatchItems(batchResults, jobId);
     
-    // Tier 2: Fuzzy SKU match (handles minor variations)
-    if (!match && item.raw_sku) {
-      match = await fuzzySKUMatch(item.raw_sku);
-      if (match) {
-        console.log(`    ✓ Matched via fuzzy SKU`);
-      }
-    }
-
-    // Tier 3: Full-text search on product name
-    if (!match || match.score < 0.85) {
-      const textMatch = await fullTextSearch(item.raw_product_name);
-      if (textMatch && (!match || textMatch.score > match.score)) {
-        match = textMatch;
-        console.log(`    ✓ Matched via full-text search`);
-      }
-    }
-
-    // Tier 4: Semantic search with embeddings (more expensive, use last)
-    if (!match || match.score < 0.75) {
-      const semanticMatch = await semanticSearch(item.raw_product_name);
-      if (semanticMatch && (!match || semanticMatch.score > match.score)) {
-        match = semanticMatch;
-        console.log(`    ✓ Matched via semantic search`);
-      }
-    }
-
-    if (!match) {
-      console.log(`    ✗ No match found`);
-    }
-
-    // Store matched item
-    const matchedItem = {
-      ...item,
-      matched_product: match?.product || null,
-      match_score: match?.score || 0,
-      match_method: match?.method || 'none'
-    };
-
-    matched.push(matchedItem);
-
-    // Save to database
-    await saveExtractedItem(matchedItem, jobId);
+    console.log(`  ✓ Saved batch ${Math.floor(batchStart/BATCH_SIZE) + 1}`);
   }
 
   const matchedCount = matched.filter(m => m.matched_product).length;
-  console.log(`✅ Matched ${matchedCount} out of ${items.length} items (${Math.round(matchedCount/items.length*100)}%)`);
+  console.log(`✅ Chunk complete: ${matchedCount}/${items.length} matched (${Math.round(matchedCount/items.length*100)}%)`);
 
   return matched;
+}
+
+/**
+ * Match a single product through multiple tiers (AI disabled for performance)
+ */
+async function matchSingleProduct(item: any, index: number, total: number) {
+  console.log(`  Matching ${index}/${total}: ${item.raw_product_name} [SKU: ${item.raw_sku}]`);
+
+  let match: { product: any; score: number; method: string } | null = null;
+  
+  // Tier 1: Try exact match on ALL available SKUs
+  if (item.all_skus && item.all_skus.length > 0) {
+    for (const sku of item.all_skus) {
+      match = await exactSKUMatch(sku);
+      if (match) {
+        console.log(`    ✓ Matched via SKU: ${sku}`);
+        break;
+      }
+    }
+  }
+  
+  // Tier 2: Fuzzy SKU match (handles minor variations)
+  if (!match && item.raw_sku) {
+    match = await fuzzySKUMatch(item.raw_sku);
+    if (match) {
+      console.log(`    ✓ Matched via fuzzy SKU`);
+    }
+  }
+
+  // Tier 3: Full-text search on product name
+  if (!match || match.score < 0.85) {
+    const textMatch = await fullTextSearch(item.raw_product_name);
+    if (textMatch && (!match || textMatch.score > match.score)) {
+      match = textMatch;
+      console.log(`    ✓ Matched via full-text search`);
+    }
+  }
+
+  // Tier 4: Semantic search (SKIP if we have decent match already - optimization)
+  if (!match || match.score < 0.70) {
+    const semanticMatch = await semanticSearch(item.raw_product_name);
+    if (semanticMatch && (!match || semanticMatch.score > match.score)) {
+      match = semanticMatch;
+      console.log(`    ✓ Matched via semantic search`);
+    }
+  }
+
+  // Tier 5: AI Agent fallback (DISABLED for performance - AI is too slow for large batches)
+  // TODO: Re-enable AI for final polish pass after all chunks complete
+  // if (canUseAI && (!match || match.score < 0.30)) {
+  //   console.log(`    🤖 Using AI agent for difficult match...`);
+  //   const aiMatch = await aiAgentMatch(item);
+  //   if (aiMatch && (!match || aiMatch.score > match.score)) {
+  //     match = aiMatch;
+  //     console.log(`    ✓ Matched via AI agent`);
+  //   }
+  // }
+
+  if (!match) {
+    console.log(`    ✗ No match found`);
+  }
+
+  // Store matched item
+  return {
+    ...item,
+    matched_product: match?.product || null,
+    match_score: match?.score || 0,
+    match_method: match?.method || 'none'
+  };
+}
+
+/**
+ * Tier 5: AI Agent for intelligent product matching (implements AI_PROCESSING_PLAN.md agents)
+ */
+async function aiAgentMatch(item: any) {
+  if (!item.raw_product_name || item.raw_product_name.length < 3) return null;
+
+  try {
+    // Use OpenAI to intelligently parse product name and find best match
+    const prompt = `You are an expert product matching agent for office supplies. Given a customer's product description, identify the key attributes and suggest the most likely matching product.
+
+Customer Product: "${item.raw_product_name}"
+${item.raw_sku ? `Customer SKU: "${item.raw_sku}"` : ''}
+
+Extract these attributes:
+- Brand (HP, Brother, Canon, etc.)
+- Product Type (Toner, Ink Cartridge, Paper, etc.)
+- Model/Part Number
+- Color (Black, Cyan, Magenta, Yellow, Tri-Color)
+- Size Category (Standard, XL, XXL)
+
+Respond with ONLY a JSON object in this exact format:
+{
+  "brand": "extracted brand or null",
+  "product_type": "toner_cartridge|ink_cartridge|paper|other",
+  "model": "extracted model number or null",
+  "color": "black|cyan|magenta|yellow|color|null",
+  "size": "standard|xl|xxl|null",
+  "search_query": "best search terms for database"
+}`;
+
+    // Try GPT-5-mini first, with fallback to GPT-4o-mini if not available
+    let response;
+    try {
+      response = await openai.chat.completions.create({
+        model: 'gpt-5-mini', // Preferred: Fast and cheap for simple parsing
+        messages: [{ role: 'user', content: prompt }],
+        // Note: GPT-5 doesn't support temperature parameter, uses default of 1
+        reasoning_effort: 'low', // Use low reasoning for fast, consistent extraction
+        max_completion_tokens: 200,
+        response_format: { type: 'json_object' }
+      });
+    } catch (modelError: any) {
+      // Fallback to gpt-4o-mini if gpt-5-mini isn't available or if there's a parameter error
+      const shouldFallback = 
+        modelError?.error?.code === 'model_not_found' || 
+        modelError?.status === 404 ||
+        modelError?.status === 400; // Catch parameter errors too
+      
+      if (shouldFallback) {
+        console.log('    ⚠️ gpt-5-mini not available or parameter error, falling back to gpt-4o-mini');
+        response = await openai.chat.completions.create({
+          model: 'gpt-4o-mini', // Fallback model
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1, // gpt-4o-mini supports temperature
+          max_completion_tokens: 200,
+          response_format: { type: 'json_object' }
+        });
+      } else {
+        throw modelError;
+      }
+    }
+
+    const parsed = JSON.parse(response.choices[0].message.content || '{}');
+    console.log(`      AI extracted:`, parsed);
+
+    // Build intelligent search query based on AI extraction
+    const searchParts: string[] = [];
+    if (parsed.brand) searchParts.push(parsed.brand);
+    if (parsed.model) searchParts.push(parsed.model);
+    if (parsed.color && parsed.color !== 'null') searchParts.push(parsed.color);
+    if (parsed.size && parsed.size !== 'null') searchParts.push(parsed.size);
+    
+    const searchQuery = parsed.search_query || searchParts.join(' ');
+
+    // Search database with AI-enhanced query
+    const { data, error } = await supabase
+      .from('master_products')
+      .select('*')
+      .or(`product_name.ilike.%${searchQuery}%,brand.ilike.%${parsed.brand || ''}%`)
+      .eq('active', true)
+      .limit(5);
+
+    if (!error && data && data.length > 0) {
+      // Find best match by comparing attributes
+      let bestMatch = data[0];
+      let bestScore = 0.65; // Base AI score
+
+      for (const product of data) {
+        let score = 0.65;
+        
+        // Boost score for matching attributes
+        if (parsed.brand && product.brand?.toLowerCase().includes(parsed.brand.toLowerCase())) score += 0.15;
+        if (parsed.model && (product.model?.toLowerCase().includes(parsed.model.toLowerCase()) || 
+                             product.sku?.toLowerCase().includes(parsed.model.toLowerCase()))) score += 0.15;
+        if (parsed.color && product.color_type?.toLowerCase() === parsed.color) score += 0.05;
+        
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = product;
+        }
+      }
+
+      return {
+        product: bestMatch,
+        score: Math.min(bestScore, 0.95), // Cap AI matches at 0.95 (never 1.0 since it's not exact)
+        method: 'ai_suggested'
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error('AI agent error:', error);
+    return null;
+  }
 }
 
 /**
@@ -566,38 +996,72 @@ async function semanticSearch(productName: string) {
 }
 
 /**
- * Save extracted item to database
+ * Save batch of extracted items to database (BULK INSERT for performance)
  */
-async function saveExtractedItem(item: any, jobId: string) {
+async function saveBatchItems(items: any[], jobId: string) {
+  if (items.length === 0) return;
+
   // Cap numeric values to prevent overflow (DECIMAL(10,2) max is 99,999,999.99)
   const MAX_DECIMAL = 99999999.99;
-  const capValue = (val: number) => Math.min(val || 0, MAX_DECIMAL);
+  const MAX_INTEGER = 2147483647;
+  const capValue = (val: number) => Math.min(Math.max(val || 0, 0), MAX_DECIMAL);
+  const capInteger = (val: number) => Math.min(Math.max(val || 0, 0), MAX_INTEGER);
+  const capScore = (val: number) => Math.min(Math.max(val || 0, 0), 1); // match_score must be 0-1
 
-  const { error } = await supabase
-    .from('order_items_extracted')
-    .insert({
+  const rows = items.map(item => {
+    // Validate match_method against CHECK constraint
+    const validMethods = ['exact_sku', 'fuzzy_sku', 'fuzzy_name', 'semantic', 'ai_suggested', 'manual', 'none', 'error', 'timeout'];
+    let matchMethod = item.match_method || 'none';
+    if (!validMethods.includes(matchMethod)) {
+      console.warn(`Invalid match_method: ${matchMethod}, defaulting to 'none'`);
+      matchMethod = 'none';
+    }
+
+    return {
       processing_job_id: jobId,
       raw_product_name: item.raw_product_name?.substring(0, 500) || null,
       raw_sku: item.raw_sku?.substring(0, 100) || null,
       raw_description: item.raw_description?.substring(0, 1000) || null,
-      quantity: item.quantity || 0, // Already validated in extraction
+      quantity: capInteger(item.quantity),
       unit_price: capValue(item.unit_price),
       total_price: capValue(item.total_price),
       matched_product_id: item.matched_product?.id || null,
-      match_score: item.match_score,
-      match_method: item.match_method || null,
+      match_score: capScore(item.match_score), // Ensure 0-1 range
+      match_method: matchMethod,
       current_total_cost: capValue(item.total_price)
-    });
+    };
+  });
+
+  const { error } = await supabase
+    .from('order_items_extracted')
+    .insert(rows);
 
   if (error) {
-    console.error('Error saving extracted item:', error);
-    console.error('Item data:', { 
-      name: item.raw_product_name, 
-      sku: item.raw_sku,
-      qty: item.quantity,
-      price: item.unit_price,
-      total: item.total_price
+    console.error('❌ Error saving batch items:', error);
+    console.error('Batch size:', items.length);
+    console.error('First item:', { 
+      name: items[0].raw_product_name, 
+      sku: items[0].raw_sku,
+      qty: items[0].quantity,
+      price: items[0].unit_price,
+      match_score: items[0].match_score,
+      match_method: items[0].match_method
     });
+    
+    // Try saving items one by one to identify problematic rows
+    console.log('🔄 Attempting individual inserts to identify failing rows...');
+    for (let i = 0; i < items.length; i++) {
+      const { error: singleError } = await supabase
+        .from('order_items_extracted')
+        .insert([rows[i]]);
+      
+      if (singleError) {
+        console.error(`❌ Failed to save item ${i + 1}:`, singleError);
+        console.error('Problematic item data:', rows[i]);
+      }
+    }
+  } else {
+    console.log(`✅ Saved batch of ${items.length} items`);
   }
 }
 
@@ -611,26 +1075,66 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
   let totalOptimizedCost = 0;
   let totalSavings = 0;
   let itemsWithSavings = 0;
+  let itemsAnalyzed = 0;
+  let itemsSkipped = 0;
   let cartridgesSaved = 0;
   let co2Reduced = 0;
 
   const breakdown: any[] = [];
 
   for (const item of matchedItems) {
+    // Skip if no match found
     if (!item.matched_product) {
       breakdown.push({
         ...item,
         savings: null,
         recommendation: 'No match found'
       });
+      itemsSkipped++;
+      console.log(`  ⊘ Skipped (no match): ${item.raw_product_name}`);
       continue;
     }
 
-    const currentCost = item.total_price;
+    const matchedProduct = item.matched_product;
+    
+    // Check if we have required data for savings calculation
+    const hasUnitPrice = matchedProduct.unit_price && matchedProduct.unit_price > 0;
+    const hasPageYield = matchedProduct.page_yield && matchedProduct.page_yield > 0;
+    const hasUserPrice = item.unit_price && item.unit_price > 0;
+    
+    if (!hasUnitPrice || !hasPageYield) {
+      // Skip items without cost or page_yield - can't calculate savings
+      const currentCost = item.total_price || 0;
+      totalCurrentCost += currentCost;
+      totalOptimizedCost += currentCost;
+      
+      breakdown.push({
+        ...item,
+        savings: 0,
+        recommendation: 'Insufficient data for savings calculation'
+      });
+      itemsSkipped++;
+      console.log(`  ⊘ Skipped (missing data): ${item.raw_product_name} - unit_price: ${hasUnitPrice ? '✓' : '✗'}, page_yield: ${hasPageYield ? '✓' : '✗'}`);
+      continue;
+    }
+
+    // We have enough data - analyze this item
+    itemsAnalyzed++;
+    const currentCost = item.total_price || 0;
     totalCurrentCost += currentCost;
 
+    // Calculate cost per page for comparison
+    const userCostPerPage = hasUserPrice && hasPageYield 
+      ? item.unit_price / matchedProduct.page_yield 
+      : null;
+    const ourCostPerPage = matchedProduct.unit_price / matchedProduct.page_yield;
+    
+    console.log(`  📊 Analyzing: ${item.raw_product_name}`);
+    console.log(`     User paying: $${item.unit_price}/unit, Cost/page: $${userCostPerPage?.toFixed(4) || 'N/A'}`);
+    console.log(`     Our price: $${matchedProduct.unit_price}/unit (${matchedProduct.page_yield} pages), Cost/page: $${ourCostPerPage.toFixed(4)}`);
+
     // Find better alternatives (larger sizes, bulk pricing)
-    const recommendation = await findBetterAlternative(item);
+    const recommendation = await findBetterAlternative(item, matchedProduct);
 
     if (recommendation) {
       const optimizedCost = recommendation.total_cost;
@@ -641,12 +1145,13 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
 
       if (savings > 0) {
         itemsWithSavings++;
+        console.log(`     💰 Savings: $${savings.toFixed(2)} (${((savings/currentCost)*100).toFixed(1)}%)`);
       }
 
       // Environmental impact
       if (recommendation.cartridges_saved > 0) {
         cartridgesSaved += recommendation.cartridges_saved;
-        const co2PerCartridge = item.matched_product.category === 'toner_cartridge' ? 5.2 : 2.5;
+        const co2PerCartridge = matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5;
         co2Reduced += recommendation.cartridges_saved * co2PerCartridge;
       }
 
@@ -666,7 +1171,7 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
           recommendation_type: recommendation.type,
           environmental_savings: {
             cartridges_saved: Math.max(0, recommendation.cartridges_saved || 0),
-            co2_reduced: Math.max(0, (recommendation.cartridges_saved || 0) * (item.matched_product.category === 'toner_cartridge' ? 5.2 : 2.5))
+            co2_reduced: Math.max(0, (recommendation.cartridges_saved || 0) * (matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5))
           }
         })
         .eq('processing_job_id', jobId)
@@ -684,8 +1189,16 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
         savings: 0,
         recommendation: 'Already optimized'
       });
+      console.log(`     ✓ Already optimized (no better alternative found)`);
     }
   }
+
+  console.log(`\n📊 Savings Summary:`);
+  console.log(`   Total items: ${matchedItems.length}`);
+  console.log(`   Items analyzed: ${itemsAnalyzed}`);
+  console.log(`   Items with savings: ${itemsWithSavings}`);
+  console.log(`   Items skipped: ${itemsSkipped}`);
+  console.log(`   Total savings: $${totalSavings.toFixed(2)}`);
 
   return {
     summary: {
@@ -709,8 +1222,7 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
 /**
  * Find better alternative products (larger sizes, bulk pricing)
  */
-async function findBetterAlternative(item: any) {
-  const currentProduct = item.matched_product;
+async function findBetterAlternative(item: any, currentProduct: any) {
   if (!currentProduct) return null;
 
   // Skip if already XL/XXL
@@ -718,8 +1230,12 @@ async function findBetterAlternative(item: any) {
     return null;
   }
 
-  // Skip if no page yield (can't calculate savings)
+  // Already checked in calculateSavings, but double-check here
   if (!currentProduct.page_yield || currentProduct.page_yield === 0) {
+    return null;
+  }
+
+  if (!currentProduct.unit_price || currentProduct.unit_price === 0) {
     return null;
   }
 
@@ -737,8 +1253,12 @@ async function findBetterAlternative(item: any) {
 
     if (xlProducts && xlProducts.length > 0) {
       const xlProduct = xlProducts[0];
-      const savings = calculateSavingsForAlternative(item, currentProduct, xlProduct);
-      if (savings) return savings;
+      
+      // Ensure XL product has required data
+      if (xlProduct.unit_price > 0 && xlProduct.page_yield > 0) {
+        const savings = calculateSavingsForAlternative(item, currentProduct, xlProduct);
+        if (savings) return savings;
+      }
     }
   }
 
@@ -746,44 +1266,64 @@ async function findBetterAlternative(item: any) {
 }
 
 /**
- * Calculate savings for an alternative product
+ * Calculate savings for an alternative product using cost per page comparison
  */
 function calculateSavingsForAlternative(item: any, currentProduct: any, xlProduct: any) {
   const currentPageYield = currentProduct.page_yield || 1000;
   const xlPageYield = xlProduct.page_yield || 2000;
   
-  // Only recommend if XL has significantly higher yield
+  // Only recommend if XL has significantly higher yield (at least 20% more)
   if (xlPageYield <= currentPageYield * 1.2) {
     return null;
   }
   
-  // Calculate quantities needed
+  // Calculate cost per page for both products
+  const currentCostPerPage = currentProduct.unit_price / currentPageYield;
+  const xlCostPerPage = xlProduct.unit_price / xlPageYield;
+  
+  // Only recommend if XL has better cost per page
+  if (xlCostPerPage >= currentCostPerPage) {
+    return null;
+  }
+  
+  // Calculate total pages user needs (based on their current order)
   const totalPages = item.quantity * currentPageYield;
+  
+  // Calculate how many XL cartridges needed for same page count
   const quantityNeeded = Math.ceil(totalPages / xlPageYield);
   
-  // Calculate costs
-  const xlTotalCost = quantityNeeded * xlProduct.unit_price;
-  const currentTotalCost = item.total_price;
+  // Calculate total costs
+  // User's current cost (what they're paying now)
+  const userCurrentTotalCost = item.total_price || (item.quantity * item.unit_price);
   
-  // Calculate cost per page
-  const currentCostPerPage = currentTotalCost / totalPages;
-  const xlCostPerPage = xlTotalCost / totalPages;
+  // Our recommended cost (using XL product)
+  const ourRecommendedCost = quantityNeeded * xlProduct.unit_price;
+  
+  // Calculate savings
+  const costSavings = userCurrentTotalCost - ourRecommendedCost;
   
   // Only recommend if there are actual savings
-  if (xlTotalCost >= currentTotalCost) {
+  if (costSavings <= 0) {
     return null;
   }
   
   const cartridgesSaved = item.quantity - quantityNeeded;
-  const costSavings = currentTotalCost - xlTotalCost;
-  const savingsPercentage = (costSavings / currentTotalCost) * 100;
+  const savingsPercentage = (costSavings / userCurrentTotalCost) * 100;
+  
+  // Calculate cost per page savings
+  const userCostPerPage = item.unit_price && currentPageYield > 0 
+    ? item.unit_price / currentPageYield 
+    : currentCostPerPage;
+  const costPerPageSavings = userCostPerPage - xlCostPerPage;
   
   return {
     product: xlProduct,
     quantity: quantityNeeded,
-    total_cost: xlTotalCost,
+    total_cost: ourRecommendedCost,
     cartridges_saved: Math.max(0, cartridgesSaved),
-    reason: `Switch to ${xlProduct.size_category?.toUpperCase() || 'High Yield'} (${xlPageYield.toLocaleString()} pages vs ${currentPageYield.toLocaleString()} pages). Saves ${cartridgesSaved.toLocaleString()} cartridges and $${costSavings.toFixed(2)} (${savingsPercentage.toFixed(1)}% savings)`,
+    cost_per_page: xlCostPerPage,
+    cost_per_page_savings: costPerPageSavings,
+    reason: `Switch to ${xlProduct.size_category?.toUpperCase() || 'High Yield'} ${xlProduct.product_name} (${xlPageYield.toLocaleString()} pages vs ${currentPageYield.toLocaleString()} pages). Cost per page: $${xlCostPerPage.toFixed(4)} vs current $${userCostPerPage.toFixed(4)}. Saves ${cartridgesSaved} cartridges and $${costSavings.toFixed(2)} (${savingsPercentage.toFixed(1)}% savings)`,
     type: 'larger_size'
   };
 }
@@ -939,7 +1479,18 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { submissionId } = await req.json();
+    const body = await req.json();
+    const { submissionId, _internal, _context } = body;
+    
+    // Handle internal self-invocation for chunking
+    if (_internal && _context) {
+      console.log('🔄 Internal chunked invocation detected');
+      await processDocument(_context);
+      return new Response(
+        JSON.stringify({ success: true, status: 'chunk_processed' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     if (!submissionId) {
       return new Response(

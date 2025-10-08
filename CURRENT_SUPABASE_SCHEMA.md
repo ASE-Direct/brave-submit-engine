@@ -1,8 +1,13 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 5, 2025
+**Last Updated:** October 8, 2025
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
+
+**Recent Changes:**
+- ✅ Added Excel file processing support (.xlsx, .xls) using SheetJS library
+- ✅ Enhanced file parsing with binary format handling
+- ✅ Intelligent header detection for both CSV and Excel files
 
 ---
 
@@ -293,7 +298,12 @@ Stores uploaded customer order files (Excel/CSV).
 **Configuration:**
 - Public access: No
 - Max file size: 10MB
-- Allowed types: .xlsx, .xls, .csv
+- Allowed types: .xlsx, .xls, .csv, .pdf
+
+**Processing Support:**
+- ✅ **Excel (.xlsx, .xls)**: Full support with SheetJS library
+- ✅ **CSV**: Native parsing with intelligent header detection
+- ⚠️ **PDF**: Upload accepted, processing not yet implemented
 
 ### `reports` (To be created)
 Will store generated PDF reports.
