@@ -28,6 +28,16 @@ This document reflects the current state of all tables, functions, and policies 
   - Matching now searches ALL vendor SKU columns (not just primary SKU)
   - Solves issue where user documents use different SKU systems than master catalog
   - Result: 50%+ improvement in match rates (+$3,318 in previously missing savings)
+- ✅ **PDF REPORT ENHANCEMENT (Oct 9, 2025):** Wholesaler SKU display
+  - PDF reports now include wholesaler_sku in itemized breakdown
+  - Shows both primary SKU and wholesaler SKU for matched and recommended products
+  - Format: "SKU: [primary] | Wholesaler: [wholesaler_sku]"
+  - Helps customers easily identify products in their wholesaler catalogs
+- ✅ **EXTENDED DESCRIPTIONS UPDATE (Oct 9, 2025):** Comprehensive product descriptions
+  - Updated 722 products with detailed extended descriptions from master catalog
+  - Descriptions include page yields, compatibility, features, and benefits
+  - Improves product matching accuracy and customer understanding
+  - Script: `scripts/update-extended-descriptions.ts`
 
 ## 💰 Pricing Logic
 

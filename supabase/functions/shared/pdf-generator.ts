@@ -31,6 +31,7 @@ interface ReportData {
     current_product: {
       name: string;
       sku: string;
+      wholesaler_sku?: string | null;
       quantity: number;
       unit_price: number;
       total_cost: number;
@@ -38,6 +39,7 @@ interface ReportData {
     recommended_product?: {
       name: string;
       sku: string;
+      wholesaler_sku?: string | null;
       quantity_needed: number;
       unit_price: number;
       total_cost: number;
@@ -265,8 +267,8 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
         yPos = 20;
       }
 
-      // Item box
-      const boxHeight = 55;
+      // Item box - increased height to accommodate wholesaler SKU
+      const boxHeight = 65;
       
       doc.setFillColor(lightGray);
       doc.rect(margin, yPos, contentWidth, boxHeight, 'F');
@@ -286,10 +288,16 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
       const currentName = doc.splitTextToSize(item.current_product.name, contentWidth - 10);
       doc.text(currentName[0], margin + 3, yPos + 5);
       
+      // Show wholesaler SKU if available
+      const currentSkuText = item.current_product.wholesaler_sku 
+        ? `SKU: ${item.current_product.sku} | Wholesaler: ${item.current_product.wholesaler_sku}`
+        : `SKU: ${item.current_product.sku}`;
+      doc.text(currentSkuText, margin + 3, yPos + 9);
+      
       doc.text(
         `${item.current_product.quantity} × $${item.current_product.unit_price.toFixed(2)} = $${item.current_product.total_cost.toFixed(2)}`,
         margin + 3,
-        yPos + 10
+        yPos + 13
       );
 
       yPos += 18;
@@ -308,15 +316,21 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
         const recName = doc.splitTextToSize(item.recommended_product.name, contentWidth - 10);
         doc.text(recName[0], margin + 3, yPos + 5);
         
+        // Show wholesaler SKU if available
+        const recSkuText = item.recommended_product.wholesaler_sku 
+          ? `SKU: ${item.recommended_product.sku} | Wholesaler: ${item.recommended_product.wholesaler_sku}`
+          : `SKU: ${item.recommended_product.sku}`;
+        doc.text(recSkuText, margin + 3, yPos + 9);
+        
         doc.text(
           `${item.recommended_product.quantity_needed} × $${item.recommended_product.unit_price.toFixed(2)} = $${item.recommended_product.total_cost.toFixed(2)}`,
           margin + 3,
-          yPos + 10
+          yPos + 13
         );
         
         if (item.recommended_product.bulk_discount_applied) {
           doc.setTextColor(brandRed);
-          doc.text('(Bulk discount applied)', margin + 3, yPos + 14);
+          doc.text('(Bulk discount applied)', margin + 3, yPos + 17);
         }
       }
 

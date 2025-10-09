@@ -495,7 +495,11 @@ async function processDocument(context: ProcessingContext) {
           yield_class,
           pack_quantity,
           uom,
-          active
+          active,
+          wholesaler_sku,
+          oem_number,
+          staples_sku,
+          depot_sku
         )
       `)
       .eq('processing_job_id', context.jobId);
@@ -2379,6 +2383,7 @@ async function generateReport(savingsAnalysis: any, context: ProcessingContext):
           current_product: {
             name: item.raw_product_name || 'Unknown Product',
             sku: item.raw_sku || 'N/A',
+            wholesaler_sku: item.matched_product?.wholesaler_sku || null,
             quantity: item.quantity || 0,
             unit_price: item.unit_price || 0,
             total_cost: item.total_price || 0
@@ -2386,6 +2391,7 @@ async function generateReport(savingsAnalysis: any, context: ProcessingContext):
           recommended_product: (item.recommendation && item.recommendation.product && item.recommendation.product.product_name) ? {
             name: item.recommendation.product.product_name,
             sku: item.recommendation.product.sku || 'N/A',
+            wholesaler_sku: item.recommendation.product.wholesaler_sku || null,
             quantity_needed: item.recommendation.quantity || 0,
             unit_price: item.recommendation.product.unit_price || 0,
             total_cost: item.recommendation.total_cost || 0,

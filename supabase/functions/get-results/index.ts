@@ -50,8 +50,8 @@ Deno.serve(async (req) => {
       .from('order_items_extracted')
       .select(`
         *,
-        matched_product:matched_product_id(sku, product_name, unit_price, page_yield),
-        recommended_product:recommended_product_id(sku, product_name, unit_price, page_yield)
+        matched_product:matched_product_id(sku, product_name, unit_price, page_yield, wholesaler_sku, oem_number),
+        recommended_product:recommended_product_id(sku, product_name, unit_price, page_yield, wholesaler_sku, oem_number)
       `)
       .eq('processing_job_id', report.processing_job_id)
       .order('cost_savings', { ascending: false, nullsFirst: false });
