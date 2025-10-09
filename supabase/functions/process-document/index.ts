@@ -315,6 +315,55 @@ interface ProcessingContext {
   itemsProcessed?: number;   // Items processed so far
 }
 
+// ============================================================================
+// ENHANCED DATA STRUCTURES FOR IMPROVED PROCESSING
+// ============================================================================
+
+/**
+ * Enhanced extracted item with comprehensive SKU tracking
+ */
+interface EnhancedExtractedItem {
+  rowNumber: number;
+  raw_product_name: string;
+  raw_description: string;
+  raw_sku: string | null;
+  
+  // ALL SKU fields found (not just primary)
+  sku_fields: {
+    primary_sku?: string;
+    oem_number?: string;
+    wholesaler_code?: string;
+    staples_sku?: string;
+    depot_code?: string;
+    all_skus: string[]; // Combined array for matching
+  };
+  
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+  uom?: string;
+  
+  // Data quality tracking
+  extraction_quality: {
+    has_sku: boolean;
+    has_price: boolean;
+    has_quantity: boolean;
+    has_description: boolean;
+    confidence: number; // 0-1
+  };
+}
+
+/**
+ * Match attempt logging for transparency
+ */
+interface MatchAttempt {
+  method: string;
+  attempted_value?: string;
+  score: number;
+  product_id?: string;
+  timestamp: Date;
+}
+
 /**
  * Update processing job progress
  */
@@ -512,10 +561,40 @@ async function processChunk(
   const endIdx = Math.min(startIdx + chunkSize, allItems.length);
   const chunk = allItems.slice(startIdx, endIdx);
   
-  console.log(`📦 Processing chunk ${chunkIndex + 1}: items ${startIdx + 1}-${endIdx} of ${allItems.length}`);
+  console.log(`\n📦 Processing chunk ${chunkIndex + 1}: items ${startIdx + 1}-${endIdx} of ${allItems.length}`);
+  
+  // ENHANCEMENT: Validate extraction quality (only on first chunk)
+  if (chunkIndex === 0) {
+    const extractionValidation = validateExtraction(chunk);
+    console.log(`📋 Extraction validation: ${extractionValidation.quality}`);
+    
+    // Store validation in job metadata (optional - for tracking)
+    try {
+      await supabase
+        .from('processing_jobs')
+        .update({
+          metadata: {
+            extraction_validation: extractionValidation,
+            updated_at: new Date().toISOString()
+          }
+        })
+        .eq('id', context.jobId);
+    } catch (err) {
+      console.error('Failed to store extraction validation:', err);
+    }
+  }
   
   // Match products in this chunk
-  await matchProducts(chunk, context.jobId, startIdx);
+  const matchedChunk = await matchProducts(chunk, context.jobId, startIdx);
+  
+  // ENHANCEMENT: Validate matching quality
+  const matchingValidation = validateMatching(matchedChunk);
+  console.log(`📋 Matching validation: ${matchingValidation.quality}`);
+  
+  // If quality is poor, log warning
+  if (matchingValidation.quality === 'poor') {
+    console.warn(`⚠️  Poor matching quality detected - consider manual review`);
+  }
 }
 
 /**
@@ -681,19 +760,58 @@ async function parseDocument(content: string | ArrayBuffer, fileName: string) {
     throw new Error('Invalid content type for parsing');
   }
 
-  // Extract product information from rows
-  const items: any[] = [];
-  for (const values of rows) {
+  // Normalize headers: convert empty strings to unique column names to prevent key collisions
+  const normalizedHeaders = headers.map((h, idx) => {
+    if (h.trim() === '') {
+      return `__COL_${idx}__`;
+    }
+    return h;
+  });
+  
+  console.log(`📊 Original headers: ${JSON.stringify(headers)}`);
+  if (normalizedHeaders.some((h, idx) => h !== headers[idx])) {
+    console.log(`📊 Normalized headers: ${JSON.stringify(normalizedHeaders)}`);
+  }
+  
+  // Convert all rows to objects using normalized headers
+  const rowObjects: Record<string, string>[] = [];
+  for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+    const values = rows[rowIdx];
     if (!values || values.length === 0) continue;
     
-    // Convert row array to object
     const row: Record<string, string> = {};
-    headers.forEach((header, index) => {
+    normalizedHeaders.forEach((header, index) => {
       row[header] = values[index]?.toString() || '';
     });
+    rowObjects.push(row);
+  }
+  
+  // Intelligent column type detection (analyzes data patterns for unlabeled columns)
+  // Check for: empty strings, __EMPTY, Column_1, __COL_X__, etc.
+  const hasGenericHeaders = normalizedHeaders.some(h => {
+    const trimmed = h.trim();
+    return /^(Column_\d+|__EMPTY(_\d+)?|__COL_\d+__)$/i.test(trimmed);
+  });
+  let detectedCols: ReturnType<typeof detectColumnTypes> | undefined;
+  
+  if (hasGenericHeaders) {
+    console.log('🔍 Detected generic/unlabeled column names - analyzing data patterns...');
+    detectedCols = detectColumnTypes(rowObjects, normalizedHeaders);
+    console.log('✓ Intelligent column detection results:');
+    console.log(`   Price column: ${detectedCols.priceCol || 'not detected'}`);
+    console.log(`   Quantity column: ${detectedCols.qtyCol || 'not detected'}`);
+    console.log(`   Product name column: ${detectedCols.productNameCol || 'not detected'}`);
+    console.log(`   SKU columns (${detectedCols.skuCols.length}): ${detectedCols.skuCols.join(', ') || 'none'}`);
+  }
 
+  // Extract product information from rows
+  const items: any[] = [];
+  for (let rowIdx = 0; rowIdx < rowObjects.length; rowIdx++) {
+    const row = rowObjects[rowIdx];
+    
     // Extract product information with intelligent column detection
-    const item = extractProductInfo(row, headers);
+    // Pass rowIdx + 1 for human-readable row numbers (1-based)
+    const item = extractProductInfo(row, normalizedHeaders, rowIdx + 1, detectedCols);
     if (item) {
       items.push(item);
     }
@@ -830,58 +948,183 @@ function parseCSVLine(line: string): string[] {
 }
 
 /**
- * Extract product info from row with intelligent multi-column detection
+ * Intelligently detect column types by analyzing data patterns across sample rows
+ * This handles documents with missing/generic headers like __EMPTY, Column_1, etc.
  */
-function extractProductInfo(row: Record<string, string>, headers: string[]) {
-  // Check if we're using synthetic headers (Column_1, Column_2, etc.)
-  const usingSyntheticHeaders = headers.some(h => /^Column_\d+$/i.test(h));
+function detectColumnTypes(rows: Record<string, string>[], headers: string[]): {
+  priceCol: string | undefined;
+  qtyCol: string | undefined;
+  productNameCol: string | undefined;
+  skuCols: string[];
+} {
+  const sampleSize = Math.min(10, rows.length);
+  const sample = rows.slice(0, sampleSize);
   
-  let productNameCol, skuColumns, qtyCol, priceCol;
+  const analysis: Record<string, {
+    numeric: number;
+    avgValue: number;
+    hasDecimals: number;
+    hasText: number;
+    avgLength: number;
+    hasDollarSign: number;
+    looksLikeSku: number;
+    looksLikeDescription: number;
+  }> = {};
   
-  if (usingSyntheticHeaders) {
-    // Position-based detection: analyze the actual data to find columns
-    console.log('   Using position-based column detection (no headers)');
+  // Analyze each column
+  headers.forEach(header => {
+    const values = sample.map(r => String(r[header] || '')).filter(v => v.trim().length > 0);
+    if (values.length === 0) {
+      analysis[header] = { numeric: 0, avgValue: 0, hasDecimals: 0, hasText: 0, avgLength: 0, hasDollarSign: 0, looksLikeSku: 0, looksLikeDescription: 0 };
+      return;
+    }
     
-    // Convert headers to array for easier indexing
+    let numericCount = 0;
+    let totalValue = 0;
+    let decimalCount = 0;
+    let textCount = 0;
+    let totalLength = 0;
+    let dollarCount = 0;
+    let skuLikeCount = 0;
+    let descLikeCount = 0;
+    
+    values.forEach(val => {
+      const trimmed = val.trim();
+      totalLength += trimmed.length;
+      
+      // Check if numeric
+      const cleaned = trimmed.replace(/[$,]/g, '');
+      const num = parseFloat(cleaned);
+      if (!isNaN(num) && trimmed.replace(/[0-9.,$ ]/g, '').length < 3) {
+        numericCount++;
+        totalValue += num;
+        if (cleaned.includes('.')) decimalCount++;
+      }
+      
+      // Check for dollar sign
+      if (trimmed.includes('$')) dollarCount++;
+      
+      // Check if text-heavy
+      if (/[a-z]/i.test(trimmed)) textCount++;
+      
+      // SKU-like: 3-30 chars, mix of letters and numbers, no spaces or few spaces
+      if (trimmed.length >= 3 && trimmed.length <= 30 && 
+          /[a-z]/i.test(trimmed) && /\d/.test(trimmed) && 
+          trimmed.split(' ').length <= 2) {
+        skuLikeCount++;
+      }
+      
+      // Description-like: long text with spaces
+      if (trimmed.length > 20 && trimmed.split(' ').length >= 3) {
+        descLikeCount++;
+      }
+    });
+    
+    analysis[header] = {
+      numeric: numericCount / values.length,
+      avgValue: totalValue / numericCount || 0,
+      hasDecimals: decimalCount / values.length,
+      hasText: textCount / values.length,
+      avgLength: totalLength / values.length,
+      hasDollarSign: dollarCount / values.length,
+      looksLikeSku: skuLikeCount / values.length,
+      looksLikeDescription: descLikeCount / values.length
+    };
+  });
+  
+  // Detect price column: numeric, often has decimals, avg value in price range (1-500), may have $
+  let priceCol = headers.find(h => {
+    const a = analysis[h];
+    return a.numeric > 0.7 && a.avgValue > 1 && a.avgValue < 1000 && (a.hasDecimals > 0.3 || a.hasDollarSign > 0);
+  });
+  
+  // Detect quantity column: numeric, low avg value (1-100), rarely decimals
+  let qtyCol = headers.find(h => {
+    if (h === priceCol) return false; // Don't reuse price column
+    const a = analysis[h];
+    return a.numeric > 0.7 && a.avgValue >= 1 && a.avgValue <= 1000 && a.hasDecimals < 0.3;
+  });
+  
+  // Detect product name/description: long text with spaces
+  let productNameCol = headers.find(h => {
+    const a = analysis[h];
+    return a.looksLikeDescription > 0.5 || (a.hasText > 0.7 && a.avgLength > 20);
+  });
+  
+  // Detect SKU columns: alphanumeric, medium length, few spaces
+  const skuCols = headers.filter(h => {
+    if (h === priceCol || h === qtyCol || h === productNameCol) return false;
+    const a = analysis[h];
+    return a.looksLikeSku > 0.3 || (a.hasText > 0.5 && a.avgLength >= 3 && a.avgLength <= 30);
+  });
+  
+  return { priceCol, qtyCol, productNameCol, skuCols };
+}
+
+/**
+ * ENHANCED: Extract product info from row with comprehensive multi-column detection
+ * 
+ * Key improvements:
+ * - Detects ALL SKU columns (OEM, Wholesaler, Staples, Depot, Generic)
+ * - More lenient validation (extracts items even without prices)
+ * - Comprehensive logging with confidence scoring
+ * - Data quality tracking per item
+ */
+function extractProductInfo(row: Record<string, string>, headers: string[], rowNumber: number = 0, detectedCols?: ReturnType<typeof detectColumnTypes>) {
+  // Check if we're using synthetic/generic headers (__COL_X__, __EMPTY, Column_1, etc.)
+  const usingSyntheticHeaders = headers.some(h => {
+    const trimmed = h.trim();
+    return /^(Column_\d+|__EMPTY(_\d+)?|__COL_\d+__)$/i.test(trimmed);
+  });
+  
+  let productNameCol, qtyCol, priceCol;
+  let skuColumnMap: Record<string, string> = {};
+  
+  // Use intelligent column detection if provided (for unlabeled columns)
+  if (detectedCols) {
+    priceCol = detectedCols.priceCol;
+    qtyCol = detectedCols.qtyCol;
+    productNameCol = detectedCols.productNameCol;
+    detectedCols.skuCols.forEach((col, idx) => {
+      skuColumnMap[`detected_${idx}`] = col;
+    });
+  } else if (usingSyntheticHeaders) {
+    // Fallback: Position-based detection on this single row
     const values = headers.map(h => row[h]);
     
-    // Look for SKU column: typically short alphanumeric codes (5-15 chars, has letters and numbers)
     const skuIdx = values.findIndex(v => {
       const s = String(v || '').trim();
       return s.length >= 3 && s.length <= 20 && /[A-Z]/i.test(s) && (/\d/.test(s) || /^M-/.test(s));
     });
     
-    // Look for description: typically longer text with spaces
     const descIdx = values.findIndex(v => {
       const s = String(v || '').trim();
       return s.length > 15 && /\s/.test(s);
     });
     
-    // Look for quantity: small numbers (1-999 typically)
     const qtyIdx = values.findIndex(v => {
       const s = String(v || '').trim();
       const num = parseFloat(s.replace(/[^0-9.]/g, ''));
       return !isNaN(num) && num > 0 && num < 10000 && s.length <= 6;
     });
     
-    // Look for price: numbers with decimals or $ signs
     const priceIdx = values.findIndex((v, i) => {
-      if (i === qtyIdx) return false; // Skip qty column
+      if (i === qtyIdx) return false;
       const s = String(v || '').trim();
       return /\$|\./.test(s) || (parseFloat(s.replace(/[^0-9.]/g, '')) > 10);
     });
     
-    if (skuIdx >= 0) skuColumns = [headers[skuIdx]];
+    if (skuIdx >= 0) skuColumnMap['primary'] = headers[skuIdx];
     if (descIdx >= 0) productNameCol = headers[descIdx];
     if (qtyIdx >= 0) qtyCol = headers[qtyIdx];
     if (priceIdx >= 0) priceCol = headers[priceIdx];
-    
-    console.log(`   Detected: SKU=col${skuIdx+1}, Desc=col${descIdx+1}, Qty=col${qtyIdx+1}, Price=col${priceIdx+1}`);
   }
   
-  // If not using synthetic headers OR position detection failed, use header-name-based detection
+  // ======================================================================
+  // ENHANCEMENT: Comprehensive column mapping
+  // ======================================================================
+  
   if (!productNameCol) {
-    // Priority: "Product Description" > "Item Description" > "Description"
     productNameCol = headers.find(h => 
       /product\s*description|item\s*description|product\s*name/i.test(h)
     ) || headers.find(h => 
@@ -889,23 +1132,27 @@ function extractProductInfo(row: Record<string, string>, headers: string[]) {
     );
   }
   
-  if (!skuColumns || skuColumns.length === 0) {
-    // Look for multiple SKU-like columns
-    // Include "Wholesaler Product Code", "Depot Product Code" (as backup), OEM, Part Number, etc.
-    skuColumns = headers.filter(h => 
-      /wholesaler.*product.*code|wholesaler.*code|depot.*product.*code|sku|oem|part\s*number|part\s*#|model|catalog/i.test(h)
-    );
-  }
+  // IMPROVED: Detect ALL SKU-like columns (not just first match)
+  const oemCol = headers.find(h => /oem|part\s*number|part\s*#|mfg.*part/i.test(h));
+  const wholesalerCol = headers.find(h => /wholesaler.*product.*code|wholesaler.*code/i.test(h));
+  const staplesSkuCol = headers.find(h => /staples.*sku|staples.*item/i.test(h));
+  const depotCol = headers.find(h => /depot.*product.*code|depot.*code/i.test(h));
+  const genericSkuCol = headers.find(h => /^sku$/i.test(h.trim()) || /^item.*number$/i.test(h.trim()) || /catalog/i.test(h));
+  
+  if (oemCol) skuColumnMap['oem'] = oemCol;
+  if (wholesalerCol) skuColumnMap['wholesaler'] = wholesalerCol;
+  if (staplesSkuCol) skuColumnMap['staples'] = staplesSkuCol;
+  if (depotCol) skuColumnMap['depot'] = depotCol;
+  if (genericSkuCol) skuColumnMap['generic'] = genericSkuCol;
   
   if (!qtyCol) {
-    // Find quantity column - handle "Qty Sold", "Qty", "Quantity"
     qtyCol = headers.find(h => {
       const lower = h.toLowerCase().trim();
-      // Exact matches first (including "Qty Sold")
+      // Exact matches (case-insensitive)
       if (lower === 'qty' || lower === 'quantity' || lower === 'qty sold' || lower === 'quantity sold') return true;
-      // Exclude columns with 'sell', 'uom', 'in' to avoid "QTY in Sell UOM"
+      // Exclude UOM columns
       if (/sell\s*uom|in\s*sell/i.test(h)) return false;
-      // Then check patterns
+      // Pattern matches
       return /^qty|^quantity|qty\s*sold|quantity\s*sold/i.test(lower);
     });
   }
@@ -913,82 +1160,132 @@ function extractProductInfo(row: Record<string, string>, headers: string[]) {
   if (!priceCol) {
     priceCol = headers.find(h => {
       const lower = h.toLowerCase().trim();
-      // Exact matches for common price columns
+      // Exact matches (case-insensitive)
       if (lower === 'sale' || lower === 'price' || lower === 'unit price' || lower === 'unit cost') return true;
-      // Pattern match excluding totals and IDs
+      // ENHANCEMENT: Support various price column formats including "v2 Price", "current price", "customer price", etc.
+      if (/v\d+\s*price|current\s*price|customer\s*price|your\s*price/i.test(h)) return true;
+      // General pattern matches, excluding total/extended
       return /(unit\s*price|unit\s*cost|price|cost|amount|sale)/i.test(h) && !/total|extended|supplier\s*id/i.test(h);
     });
   }
-
-  // Need at least a product name or SKU
-  const productName = productNameCol ? row[productNameCol] : '';
-  const skus = skuColumns.map(col => row[col]).filter(Boolean);
   
-  if (!productName && skus.length === 0) {
+  // Extract values
+  const productName = productNameCol ? row[productNameCol]?.trim() : '';
+  
+  // ENHANCEMENT: Collect ALL SKU values
+  const skuFields: any = {
+    all_skus: []
+  };
+  
+  if (oemCol && row[oemCol]) {
+    skuFields.oem_number = row[oemCol].trim();
+    skuFields.all_skus.push(row[oemCol].trim());
+  }
+  if (wholesalerCol && row[wholesalerCol]) {
+    skuFields.wholesaler_code = row[wholesalerCol].trim();
+    skuFields.all_skus.push(row[wholesalerCol].trim());
+  }
+  if (staplesSkuCol && row[staplesSkuCol]) {
+    skuFields.staples_sku = row[staplesSkuCol].trim();
+    skuFields.all_skus.push(row[staplesSkuCol].trim());
+  }
+  if (depotCol && row[depotCol]) {
+    skuFields.depot_code = row[depotCol].trim();
+    skuFields.all_skus.push(row[depotCol].trim());
+  }
+  if (genericSkuCol && row[genericSkuCol]) {
+    skuFields.primary_sku = row[genericSkuCol].trim();
+    if (!skuFields.all_skus.includes(row[genericSkuCol].trim())) {
+      skuFields.all_skus.push(row[genericSkuCol].trim());
+    }
+  }
+  
+  // Primary SKU priority: OEM > Wholesaler > Staples > Depot > Generic
+  const primarySku = skuFields.oem_number || 
+                     skuFields.wholesaler_code || 
+                     skuFields.staples_sku || 
+                     skuFields.depot_code || 
+                     skuFields.primary_sku || 
+                     (skuFields.all_skus.length > 0 ? skuFields.all_skus[0] : null);
+  
+  // Remove duplicates from all_skus
+  skuFields.all_skus = [...new Set(skuFields.all_skus)];
+  
+  // IMPROVED: More lenient validation - extract even with missing data
+  if (!productName && skuFields.all_skus.length === 0) {
     return null;
   }
   
-  // Skip header-like rows or metadata
-  if (!productName || productName.length < 2 || 
-      /^(account|customer|report|date|total)/i.test(productName)) {
+  // Skip obvious header/metadata rows
+  if (productName && productName.length > 0 && 
+      /^(account|customer|report|date|total|page|subtotal)/i.test(productName)) {
     return null;
   }
-
-  // Extract SKU with priority: OEM > Wholesaler Code > Staples SKU > Depot Code
-  const oemCol = headers.find(h => /oem|part\s*number|part\s*#/i.test(h));
-  const wholesalerCol = headers.find(h => /wholesaler.*product.*code|wholesaler.*code/i.test(h));
-  const staplesSkuCol = headers.find(h => /staples.*sku/i.test(h));
-  const depotCol = headers.find(h => /depot.*product.*code|depot.*code/i.test(h));
   
-  const primarySku = (oemCol && row[oemCol]) || 
-                     (wholesalerCol && row[wholesalerCol]) || 
-                     (staplesSkuCol && row[staplesSkuCol]) || 
-                     (depotCol && row[depotCol]) || 
-                     skus[0] || '';
-  
-  // Get all SKUs for matching attempts
-  const allSkus = skus.filter(s => s && s.length > 0);
-
+  // Extract quantity and price (with fallbacks)
   const quantityStr = qtyCol ? row[qtyCol]?.replace(/[^0-9.]/g, '') : '1';
   const priceStr = priceCol ? row[priceCol]?.replace(/[^0-9.]/g, '') : '0';
-
+  
   let quantity = parseInt(quantityStr) || 1;
   let unitPrice = parseFloat(priceStr) || 0;
   
-  // Log warning if no price column found
-  if (!priceCol && unitPrice === 0) {
-    console.log(`⚠️ No price column found - using $0.00 for "${productName}"`);
+  // Data quality assessment
+  const hasPrice = unitPrice > 0;
+  const hasSku = skuFields.all_skus.length > 0;
+  const hasDescription = productName.length > 0;
+  const hasQuantity = quantity > 0;
+  
+  // Calculate extraction confidence
+  let confidence = 0;
+  if (hasDescription) confidence += 0.25;
+  if (hasSku) confidence += 0.35;
+  if (hasPrice) confidence += 0.25;
+  if (hasQuantity) confidence += 0.15;
+  
+  // Log extraction details
+  if (rowNumber > 0) {
+    const displayName = productName || primarySku || 'Unknown';
+    const skuCount = skuFields.all_skus.length;
+    console.log(`   Row ${rowNumber}: ✓ "${displayName}" | SKUs: ${skuCount} | Qty: ${quantity} | Price: $${unitPrice.toFixed(2)} | Confidence: ${(confidence*100).toFixed(0)}%`);
+    
+    if (!hasPrice) {
+      console.log(`      ⚠️ No price - will use fallback pricing`);
+    }
   }
   
-  // Validation: Reject obviously wrong values (likely wrong column)
-  // Max reasonable quantity for a single order line: 10,000 units
-  // Max reasonable unit price: $100,000
+  // Sanity checks with warnings (but don't reject)
   if (quantity > 10000) {
-    console.warn(`Suspicious quantity ${quantity} for ${productName}, capping to 10000`);
-    quantity = 10000;
+    console.warn(`   Row ${rowNumber}: ⚠️ Very high quantity ${quantity} for ${productName}`);
   }
   
   if (unitPrice > 100000) {
-    console.warn(`Suspicious unit price ${unitPrice} for ${productName}, capping to 100000`);
-    unitPrice = 100000;
+    console.warn(`   Row ${rowNumber}: ⚠️ Very high price $${unitPrice} for ${productName}`);
   }
   
-  // Calculate total with safety cap (DECIMAL(10,2) max is 99,999,999.99)
+  // Calculate total
   const MAX_DECIMAL = 99999999.99;
   let totalPrice = quantity * unitPrice;
   if (totalPrice > MAX_DECIMAL) {
-    console.warn(`Total price ${totalPrice} exceeds max, capping to ${MAX_DECIMAL}`);
     totalPrice = MAX_DECIMAL;
   }
-
+  
   return {
-    raw_product_name: productName.trim(),
-    raw_sku: primarySku.trim() || null,
-    raw_description: productName.trim(),
-    all_skus: allSkus, // Keep all SKUs for matching
+    rowNumber,
+    raw_product_name: productName || 'Unknown Product',
+    raw_sku: primarySku,
+    raw_description: productName || primarySku || 'No description',
+    sku_fields: skuFields,
     quantity,
     unit_price: unitPrice,
-    total_price: totalPrice
+    total_price: totalPrice,
+    uom: undefined,
+    extraction_quality: {
+      has_sku: hasSku,
+      has_price: hasPrice,
+      has_quantity: hasQuantity,
+      has_description: hasDescription,
+      confidence
+    }
   };
 }
 
@@ -1041,71 +1338,221 @@ async function matchProducts(items: any[], jobId: string, startOffset = 0) {
 }
 
 /**
- * Match a single product through multiple tiers (AI disabled for performance)
+ * ENHANCED: Match a single product through comprehensive multi-tier matching
+ * 
+ * Key improvements:
+ * - Tries ALL available SKU fields (not just one)
+ * - 6-tier matching strategy (exact, fuzzy, combined, full-text, semantic, AI)
+ * - Detailed logging with timing metrics
+ * - Match attempt tracking for debugging
  */
 async function matchSingleProduct(item: any, index: number, total: number) {
-  console.log(`  Matching ${index}/${total}: ${item.raw_product_name} [SKU: ${item.raw_sku}]`);
-
-  let match: { product: any; score: number; method: string } | null = null;
+  const startTime = Date.now();
+  const matchLog: MatchAttempt[] = [];
   
-  // Tier 1: Try exact match on ALL available SKUs
-  if (item.all_skus && item.all_skus.length > 0) {
-    for (const sku of item.all_skus) {
-      match = await exactSKUMatch(sku);
+  const displayName = item.raw_product_name || item.raw_sku || 'Unknown';
+  console.log(`\n  🔍 [${index}/${total}] Matching: "${displayName}"`);
+  
+  // Log available SKUs
+  if (item.sku_fields && item.sku_fields.all_skus && item.sku_fields.all_skus.length > 0) {
+    console.log(`     Available SKUs: [${item.sku_fields.all_skus.join(', ')}]`);
+  }
+  
+  // Log extraction quality
+  if (item.extraction_quality) {
+    console.log(`     Extraction confidence: ${(item.extraction_quality.confidence * 100).toFixed(0)}%`);
+  }
+
+  let bestMatch: { product: any; score: number; method: string } | null = null;
+  
+  // ======================================================================
+  // TIER 1: Exact SKU match on ALL available SKU fields
+  // ======================================================================
+  if (item.sku_fields && item.sku_fields.all_skus && item.sku_fields.all_skus.length > 0) {
+    console.log(`     🎯 TIER 1: Trying exact match on ${item.sku_fields.all_skus.length} SKUs...`);
+    
+    for (let i = 0; i < item.sku_fields.all_skus.length; i++) {
+      const sku = item.sku_fields.all_skus[i];
+      if (!sku || sku.length < 2) continue;
+      
+      const match = await exactSKUMatch(sku);
+      matchLog.push({
+        method: 'exact_sku',
+        attempted_value: sku,
+        score: match ? match.score : 0,
+        product_id: match?.product?.id,
+        timestamp: new Date()
+      });
+      
       if (match) {
-        console.log(`    ✓ Matched via SKU: ${sku}`);
-        break;
+        console.log(`        ✅ Exact match on SKU #${i+1} "${sku}": ${match.product.product_name}`);
+        bestMatch = match;
+        break; // Found exact match, stop searching
+      }
+    }
+    
+    if (bestMatch && bestMatch.score === 1.0) {
+      const duration = Date.now() - startTime;
+      console.log(`     ✅ MATCHED (exact_sku) in ${duration}ms | Score: 1.00`);
+      return {
+        ...item,
+        matched_product: bestMatch.product,
+        match_score: bestMatch.score,
+        match_method: bestMatch.method,
+        match_attempts: matchLog.length,
+        match_duration_ms: duration
+      };
+    }
+  }
+  
+  // ======================================================================
+  // TIER 2: Fuzzy SKU match on ALL available SKU fields
+  // ======================================================================
+  if (item.sku_fields && item.sku_fields.all_skus && item.sku_fields.all_skus.length > 0) {
+    console.log(`     🎯 TIER 2: Trying fuzzy match on ${item.sku_fields.all_skus.length} SKUs...`);
+    
+    for (const sku of item.sku_fields.all_skus) {
+      if (!sku || sku.length < 2) continue;
+      
+      const match = await fuzzySKUMatch(sku);
+      matchLog.push({
+        method: 'fuzzy_sku',
+        attempted_value: sku,
+        score: match ? match.score : 0,
+        product_id: match?.product?.id,
+        timestamp: new Date()
+      });
+      
+      if (match && (!bestMatch || match.score > bestMatch.score)) {
+        console.log(`        ✅ Fuzzy match on "${sku}": ${match.product.product_name} (score: ${match.score.toFixed(2)})`);
+        bestMatch = match;
+      }
+    }
+    
+    if (bestMatch && bestMatch.score >= 0.90) {
+      const duration = Date.now() - startTime;
+      console.log(`     ✅ MATCHED (fuzzy_sku) in ${duration}ms | Score: ${bestMatch.score.toFixed(2)}`);
+      return {
+        ...item,
+        matched_product: bestMatch.product,
+        match_score: bestMatch.score,
+        match_method: bestMatch.method,
+        match_attempts: matchLog.length,
+        match_duration_ms: duration
+      };
+    }
+  }
+
+  // ======================================================================
+  // TIER 3: Combined SKU + Description search
+  // ======================================================================
+  if (item.sku_fields && item.sku_fields.all_skus.length > 0 && item.raw_product_name) {
+    console.log(`     🎯 TIER 3: Trying combined SKU + description...`);
+    
+    for (const sku of item.sku_fields.all_skus) {
+      const combinedSearch = `${sku} ${item.raw_product_name}`;
+      const match = await fullTextSearch(combinedSearch);
+      matchLog.push({
+        method: 'combined_search',
+        attempted_value: combinedSearch.substring(0, 50),
+        score: match ? match.score : 0,
+        product_id: match?.product?.id,
+        timestamp: new Date()
+      });
+      
+      if (match && (!bestMatch || match.score > bestMatch.score)) {
+        console.log(`        ✅ Combined search: ${match.product.product_name} (score: ${match.score.toFixed(2)})`);
+        bestMatch = match;
       }
     }
   }
+
+  // ======================================================================
+  // TIER 4: Full-text search on product name
+  // ======================================================================
+  if (!bestMatch || bestMatch.score < 0.85) {
+    console.log(`     🎯 TIER 4: Trying full-text search...`);
+    
+    const match = await fullTextSearch(item.raw_product_name);
+    matchLog.push({
+      method: 'full_text',
+      attempted_value: item.raw_product_name.substring(0, 50),
+      score: match ? match.score : 0,
+      product_id: match?.product?.id,
+      timestamp: new Date()
+    });
+    
+    if (match && (!bestMatch || match.score > bestMatch.score)) {
+      console.log(`        ✅ Full-text match: ${match.product.product_name} (score: ${match.score.toFixed(2)})`);
+      bestMatch = match;
+    }
+  }
+
+  // ======================================================================
+  // TIER 5: Semantic search
+  // ======================================================================
+  if (!bestMatch || bestMatch.score < 0.75) {
+    console.log(`     🎯 TIER 5: Trying semantic search...`);
+    
+    const match = await semanticSearch(item.raw_product_name);
+    matchLog.push({
+      method: 'semantic',
+      attempted_value: item.raw_product_name.substring(0, 50),
+      score: match ? match.score : 0,
+      product_id: match?.product?.id,
+      timestamp: new Date()
+    });
+    
+    if (match && (!bestMatch || match.score > bestMatch.score)) {
+      console.log(`        ✅ Semantic match: ${match.product.product_name} (score: ${match.score.toFixed(2)})`);
+      bestMatch = match;
+    }
+  }
+
+  // ======================================================================
+  // TIER 6: AI Agent (optional, for low-confidence items)
+  // ======================================================================
+  const useAIForLowConfidence = false; // Set to true to enable AI fallback
   
-  // Tier 2: Fuzzy SKU match (handles minor variations)
-  if (!match && item.raw_sku) {
-    match = await fuzzySKUMatch(item.raw_sku);
-    if (match) {
-      console.log(`    ✓ Matched via fuzzy SKU`);
+  if (useAIForLowConfidence && (!bestMatch || bestMatch.score < 0.65)) {
+    console.log(`     🤖 TIER 6: Using AI agent (low confidence)...`);
+    
+    const match = await aiAgentMatch(item);
+    matchLog.push({
+      method: 'ai_agent',
+      attempted_value: item.raw_product_name.substring(0, 50),
+      score: match ? match.score : 0,
+      product_id: match?.product?.id,
+      timestamp: new Date()
+    });
+    
+    if (match && (!bestMatch || match.score > bestMatch.score)) {
+      console.log(`        ✅ AI match: ${match.product.product_name} (score: ${match.score.toFixed(2)})`);
+      bestMatch = match;
     }
   }
 
-  // Tier 3: Full-text search on product name
-  if (!match || match.score < 0.85) {
-    const textMatch = await fullTextSearch(item.raw_product_name);
-    if (textMatch && (!match || textMatch.score > match.score)) {
-      match = textMatch;
-      console.log(`    ✓ Matched via full-text search`);
-    }
+  // ======================================================================
+  // Final Result
+  // ======================================================================
+  const duration = Date.now() - startTime;
+  
+  if (bestMatch) {
+    console.log(`     ✅ MATCHED in ${duration}ms | Method: ${bestMatch.method} | Score: ${bestMatch.score.toFixed(2)}`);
+    console.log(`     📦 Product: ${bestMatch.product.product_name} (SKU: ${bestMatch.product.sku})`);
+  } else {
+    console.log(`     ❌ NO MATCH after ${matchLog.length} attempts in ${duration}ms`);
+    console.log(`     💡 Consider manual review for: "${item.raw_product_name}"`);
   }
 
-  // Tier 4: Semantic search (SKIP if we have decent match already - optimization)
-  if (!match || match.score < 0.70) {
-    const semanticMatch = await semanticSearch(item.raw_product_name);
-    if (semanticMatch && (!match || semanticMatch.score > match.score)) {
-      match = semanticMatch;
-      console.log(`    ✓ Matched via semantic search`);
-    }
-  }
-
-  // Tier 5: AI Agent fallback (DISABLED for performance - AI is too slow for large batches)
-  // TODO: Re-enable AI for final polish pass after all chunks complete
-  // if (canUseAI && (!match || match.score < 0.30)) {
-  //   console.log(`    🤖 Using AI agent for difficult match...`);
-  //   const aiMatch = await aiAgentMatch(item);
-  //   if (aiMatch && (!match || aiMatch.score > match.score)) {
-  //     match = aiMatch;
-  //     console.log(`    ✓ Matched via AI agent`);
-  //   }
-  // }
-
-  if (!match) {
-    console.log(`    ✗ No match found`);
-  }
-
-  // Store matched item
   return {
     ...item,
-    matched_product: match?.product || null,
-    match_score: match?.score || 0,
-    match_method: match?.method || 'none'
+    matched_product: bestMatch?.product || null,
+    match_score: bestMatch?.score || 0,
+    match_method: bestMatch?.method || 'none',
+    match_attempts: matchLog.length,
+    match_duration_ms: duration,
+    match_log: matchLog
   };
 }
 
@@ -1211,11 +1658,13 @@ async function exactSKUMatch(sku: string) {
   // Clean the SKU
   const cleanSku = sku.trim().toUpperCase();
 
+  // ENHANCED: Search all SKU columns (primary SKU + vendor cross-references)
   const { data, error } = await supabase
     .from('master_products')
     .select('*')
-    .eq('sku', cleanSku)
+    .or(`sku.eq.${cleanSku},oem_number.eq.${cleanSku},wholesaler_sku.eq.${cleanSku},staples_sku.eq.${cleanSku},depot_sku.eq.${cleanSku}`)
     .eq('active', true)
+    .limit(1)
     .single();
 
   if (!error && data) {
@@ -1265,24 +1714,34 @@ async function fuzzySKUMatch(sku: string) {
   }
 
   for (const searchSku of skusToTry) {
-    // Try ILIKE search (case-insensitive pattern match)
-    const { data, error } = await supabase
+    // ENHANCED: Try ILIKE search across all SKU columns
+    const { data, error} = await supabase
       .from('master_products')
       .select('*')
-      .ilike('sku', `%${searchSku}%`)
+      .or(`sku.ilike.%${searchSku}%,oem_number.ilike.%${searchSku}%,wholesaler_sku.ilike.%${searchSku}%,staples_sku.ilike.%${searchSku}%,depot_sku.ilike.%${searchSku}%`)
       .eq('active', true)
       .limit(5);
 
     if (!error && data && data.length > 0) {
-      // Find best match by comparing normalized SKUs
+      // Find best match by comparing normalized SKUs across all SKU fields
       for (const product of data) {
-        const productSkuNorm = product.sku.toUpperCase().replace(/[\s\-_]/g, '');
-        if (productSkuNorm === searchSku) {
-          return {
-            product,
-            score: 0.95,
-            method: 'fuzzy_sku'
-          };
+        const productSkus = [
+          product.sku,
+          product.oem_number,
+          product.wholesaler_sku,
+          product.staples_sku,
+          product.depot_sku
+        ].filter(Boolean); // Remove null/undefined
+        
+        for (const productSku of productSkus) {
+          const productSkuNorm = productSku.toUpperCase().replace(/[\s\-_]/g, '');
+          if (productSkuNorm === searchSku) {
+            return {
+              product,
+              score: 0.95,
+              method: 'fuzzy_sku'
+            };
+          }
         }
       }
       
@@ -1399,6 +1858,138 @@ async function semanticSearch(productName: string) {
   }
 
   return null;
+}
+
+// ============================================================================
+// QUALITY VALIDATION FUNCTIONS
+// ============================================================================
+
+/**
+ * Validate extraction quality with comprehensive metrics
+ */
+function validateExtraction(items: any[]): {
+  quality: 'excellent' | 'good' | 'acceptable' | 'poor';
+  metrics: any;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  
+  const totalItems = items.length;
+  const itemsWithName = items.filter(i => i.raw_product_name && i.raw_product_name.length > 2).length;
+  const itemsWithSku = items.filter(i => i.sku_fields && i.sku_fields.all_skus && i.sku_fields.all_skus.length > 0).length;
+  const itemsWithPrice = items.filter(i => i.unit_price > 0).length;
+  const avgConfidence = items.reduce((sum, i) => sum + (i.extraction_quality?.confidence || 0), 0) / totalItems;
+  
+  // Assess quality
+  let quality: 'excellent' | 'good' | 'acceptable' | 'poor';
+  
+  if (totalItems === 0) {
+    quality = 'poor';
+    warnings.push('No items extracted from document');
+  } else if (itemsWithName < totalItems * 0.80) {
+    quality = 'poor';
+    warnings.push(`Only ${itemsWithName}/${totalItems} items have product names`);
+  } else if (itemsWithSku < totalItems * 0.30) {
+    quality = 'acceptable';
+    warnings.push(`Only ${itemsWithSku}/${totalItems} items have SKU numbers`);
+  } else if (itemsWithPrice < totalItems * 0.50) {
+    quality = 'acceptable';
+    warnings.push(`Only ${itemsWithPrice}/${totalItems} items have pricing data`);
+  } else if (avgConfidence < 0.60) {
+    quality = 'good';
+    warnings.push(`Average extraction confidence is ${(avgConfidence * 100).toFixed(0)}%`);
+  } else {
+    quality = 'excellent';
+  }
+  
+  const metrics = {
+    total_items: totalItems,
+    items_with_name: itemsWithName,
+    items_with_sku: itemsWithSku,
+    items_with_price: itemsWithPrice,
+    avg_confidence: avgConfidence
+  };
+  
+  console.log(`\n📊 Extraction Quality: ${quality.toUpperCase()}`);
+  console.log(`   Total items: ${totalItems}`);
+  console.log(`   With names: ${itemsWithName} (${(itemsWithName/totalItems*100).toFixed(0)}%)`);
+  console.log(`   With SKUs: ${itemsWithSku} (${(itemsWithSku/totalItems*100).toFixed(0)}%)`);
+  console.log(`   With prices: ${itemsWithPrice} (${(itemsWithPrice/totalItems*100).toFixed(0)}%)`);
+  console.log(`   Avg confidence: ${(avgConfidence*100).toFixed(0)}%`);
+  if (warnings.length > 0) {
+    console.log(`   ⚠️  Warnings: ${warnings.join('; ')}`);
+  }
+  
+  return { quality, metrics, warnings };
+}
+
+/**
+ * Validate matching quality with comprehensive metrics
+ */
+function validateMatching(matchedItems: any[]): {
+  quality: 'excellent' | 'good' | 'acceptable' | 'poor';
+  metrics: any;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  
+  const totalItems = matchedItems.length;
+  const itemsMatched = matchedItems.filter(i => i.matched_product).length;
+  const matchRate = itemsMatched / totalItems;
+  
+  const exactMatches = matchedItems.filter(i => i.match_method === 'exact_sku').length;
+  const fuzzyMatches = matchedItems.filter(i => i.match_method === 'fuzzy_sku').length;
+  const semanticMatches = matchedItems.filter(i => i.match_method === 'semantic').length;
+  const aiMatches = matchedItems.filter(i => i.match_method === 'ai_suggested').length;
+  
+  const highConfidence = matchedItems.filter(i => i.match_score >= 0.90).length;
+  const mediumConfidence = matchedItems.filter(i => i.match_score >= 0.70 && i.match_score < 0.90).length;
+  const lowConfidence = matchedItems.filter(i => i.match_score > 0 && i.match_score < 0.70).length;
+  
+  const avgScore = matchedItems
+    .filter(i => i.match_score > 0)
+    .reduce((sum, i) => sum + i.match_score, 0) / itemsMatched || 0;
+  
+  // Assess quality
+  let quality: 'excellent' | 'good' | 'acceptable' | 'poor';
+  
+  if (matchRate < 0.50) {
+    quality = 'poor';
+    warnings.push(`Low match rate: ${(matchRate * 100).toFixed(0)}%`);
+  } else if (matchRate < 0.75) {
+    quality = 'acceptable';
+    warnings.push(`Match rate could be better: ${(matchRate * 100).toFixed(0)}%`);
+  } else if (highConfidence < itemsMatched * 0.60) {
+    quality = 'good';
+    warnings.push(`Only ${(highConfidence/itemsMatched*100).toFixed(0)}% high-confidence matches`);
+  } else {
+    quality = 'excellent';
+  }
+  
+  const metrics = {
+    total_items: totalItems,
+    items_matched: itemsMatched,
+    match_rate: matchRate,
+    exact_matches: exactMatches,
+    fuzzy_matches: fuzzyMatches,
+    semantic_matches: semanticMatches,
+    ai_matches: aiMatches,
+    high_confidence: highConfidence,
+    medium_confidence: mediumConfidence,
+    low_confidence: lowConfidence,
+    avg_score: avgScore
+  };
+  
+  console.log(`\n📊 Matching Quality: ${quality.toUpperCase()}`);
+  console.log(`   Match rate: ${itemsMatched}/${totalItems} (${(matchRate*100).toFixed(0)}%)`);
+  console.log(`   Exact SKU: ${exactMatches}, Fuzzy: ${fuzzyMatches}, Semantic: ${semanticMatches}, AI: ${aiMatches}`);
+  console.log(`   High conf: ${highConfidence}, Medium: ${mediumConfidence}, Low: ${lowConfidence}`);
+  console.log(`   Avg score: ${(avgScore*100).toFixed(0)}%`);
+  if (warnings.length > 0) {
+    console.log(`   ⚠️  Warnings: ${warnings.join('; ')}`);
+  }
+  
+  return { quality, metrics, warnings };
 }
 
 /**
@@ -1572,7 +2163,7 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
     console.log(`     💵 Basic savings (using ASE price): $${basicTotalSavings.toFixed(2)} ($${basicSavingsPerUnit.toFixed(2)}/unit)`);
 
     // STEP 2: Try to find higher-yield alternative (only if we have page yield data)
-    let higherYieldRec = null;
+    let higherYieldRec: HigherYieldRecommendation | null = null;
     if (hasPageYield && matchedProduct.family_series) {
       higherYieldRec = await suggestHigherYield(
         matchedProduct,
@@ -1583,7 +2174,7 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
     }
 
     // STEP 3: Use whichever option gives better savings
-    if (higherYieldRec) {
+    if (higherYieldRec !== null) {
       // Calculate actual savings using effective price (handles missing user prices)
       const userCurrentTotal = item.quantity * effectiveUserPrice;
       const optimizedCost = higherYieldRec.quantityNeeded * higherYieldRec.recommendedPrice;

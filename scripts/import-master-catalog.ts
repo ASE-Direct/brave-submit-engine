@@ -99,6 +99,12 @@ interface Product {
   pack_qty_std: number;
   ase_unit_price: number;
   inventory_status: 'in_stock' | 'low' | 'oos' | null;
+  
+  // VENDOR SKU CROSS-REFERENCES: For multi-vendor matching
+  oem_number: string | null;
+  wholesaler_sku: string | null;
+  staples_sku: string | null;
+  depot_sku: string | null;
 }
 
 /**
@@ -365,14 +371,21 @@ async function generateEmbedding(text: string, retries = 3): Promise<number[]> {
  */
 function transformRow(row: any): Product | null {
   try {
-    const oemNumber = row['OEM Number'] || row['Wholesaler Product Code'] || '';
+    // Extract all SKU types for cross-reference matching
+    const oemNumber = row['OEM Number'] || '';
+    const wholesalerSku = row['Wholesaler Product Code'] || '';
+    const staplesPartNumber = row['Staples Part Number'] || '';
+    const depotSku = row['Depot Product Code'] || '';
+    
     const description = row['DESCRIPTION'] || row['Product Description'] || '';
     const longDescription = row['LONG DESCRIPTION'] || description;
     const manufacturer = row['MFR NAME'] || row['Primary Supplier Name'] || '';
-    const staplesPartNumber = row['Staples Part Number'] || row['Depot Product Code'] || '';
     
-    // Skip if no SKU
-    if (!oemNumber && !staplesPartNumber) {
+    // Primary SKU (prefer OEM, then wholesaler, then staples, then depot)
+    const primarySku = oemNumber || wholesalerSku || staplesPartNumber || depotSku;
+    
+    // Skip if no SKU at all
+    if (!primarySku) {
       return null;
     }
     
@@ -388,8 +401,15 @@ function transformRow(row: any): Product | null {
     // Calculate normalized ASE price (per-each basis)
     const aseUnitPrice = unitPrice / Math.max(packQty, 1);
     
+    // Build related_skus array with all alternate SKUs
+    const relatedSkus: string[] = [];
+    if (staplesPartNumber && staplesPartNumber !== primarySku) relatedSkus.push(staplesPartNumber);
+    if (wholesalerSku && wholesalerSku !== primarySku) relatedSkus.push(wholesalerSku);
+    if (depotSku && depotSku !== primarySku) relatedSkus.push(depotSku);
+    if (oemNumber && oemNumber !== primarySku) relatedSkus.push(oemNumber);
+    
     const product: Product = {
-      sku: oemNumber || staplesPartNumber,
+      sku: primarySku,
       product_name: description,
       category,
       brand,
@@ -411,11 +431,11 @@ function transformRow(row: any): Product | null {
       long_description: longDescription,
       image_url: row['Image Link'] || null,
       replaces_products: [], // Can be populated from additional data
-      related_skus: staplesPartNumber ? [staplesPartNumber] : [],
+      related_skus: relatedSkus,
       active: true,
       
       // NEW: Canonical fields
-      family_series: extractFamilySeries(brand, model, oemNumber || staplesPartNumber, description),
+      family_series: extractFamilySeries(brand, model, primarySku, description),
       yield_class: yieldClass,
       compatible_printers: null, // Can be populated from additional data
       oem_vs_compatible: detectOemType(manufacturer, brand, description),
@@ -423,6 +443,12 @@ function transformRow(row: any): Product | null {
       pack_qty_std: packQty,
       ase_unit_price: aseUnitPrice,
       inventory_status: 'in_stock', // Default to in stock
+      
+      // VENDOR SKU CROSS-REFERENCES: Store all SKU types for matching
+      oem_number: oemNumber || null,
+      wholesaler_sku: wholesalerSku || null,
+      staples_sku: staplesPartNumber || null,
+      depot_sku: depotSku || null,
     };
     
     return product;
