@@ -699,23 +699,84 @@ async function parseDocument(content: string | ArrayBuffer, fileName: string) {
     
     console.log(`📊 Available sheets: ${workbook.SheetNames.join(', ')}`);
     
-    // Find the sheet with the most data
+    // IMPROVED: Find the sheet with actual PRODUCT data (not just most rows)
+    // Score each sheet based on data quality indicators
     let bestSheet = workbook.SheetNames[0];
-    let maxRows = 0;
+    let bestScore = -1;
     
     for (const sheetName of workbook.SheetNames) {
       const sheet = workbook.Sheets[sheetName];
-      const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false, raw: false });
+      const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false, raw: false }) as any[][];
       const rowCount = data.length;
-      console.log(`   "${sheetName}": ${rowCount} rows`);
       
-      if (rowCount > maxRows) {
-        maxRows = rowCount;
+      // Calculate quality score for this sheet
+      let score = 0;
+      
+      // Factor 1: Has a reasonable number of rows (20-10000)
+      if (rowCount >= 20 && rowCount <= 10000) {
+        score += 50;
+      } else if (rowCount < 20) {
+        score -= 100; // Too few rows
+      } else if (rowCount > 10000) {
+        score += 20; // Very large, might be metadata
+      }
+      
+      // Factor 2: Look for product-like column headers in first 20 rows
+      const headerRows = data.slice(0, 20);
+      let hasProductIndicators = false;
+      let hasMetadataIndicators = false;
+      
+      for (const row of headerRows) {
+        const rowText = row.map(c => String(c || '').toLowerCase()).join(' ');
+        
+        // Product data indicators
+        if (/\b(sku|oem|part.*number|item.*number|product.*name|description|price|qty|quantity|unit.*price|total)\b/i.test(rowText)) {
+          hasProductIndicators = true;
+          score += 10;
+        }
+        
+        // Metadata indicators (account info, addresses, etc.)
+        if (/\b(account.*name|account.*number|ship.*to|bill.*to|address.*line|customer.*number|report.*date|report.*run)\b/i.test(rowText)) {
+          hasMetadataIndicators = true;
+          score -= 15;
+        }
+      }
+      
+      // Factor 3: Count numeric columns (prices, quantities) in sample rows
+      const sampleRows = data.slice(Math.max(0, Math.floor(rowCount * 0.1)), Math.min(data.length, Math.floor(rowCount * 0.1) + 50));
+      let numericColumnCount = 0;
+      if (sampleRows.length > 0) {
+        const firstRow = sampleRows[0] || [];
+        for (let colIdx = 0; colIdx < firstRow.length; colIdx++) {
+          let numericCount = 0;
+          for (const row of sampleRows.slice(0, 10)) {
+            const val = String(row[colIdx] || '').trim();
+            if (val && /^[\d.,\$]+$/.test(val.replace(/[$,]/g, ''))) {
+              numericCount++;
+            }
+          }
+          if (numericCount >= 5) numericColumnCount++;
+        }
+      }
+      score += numericColumnCount * 5;
+      
+      // Factor 4: Check for data variety (not all rows identical)
+      const uniqueFirstCells = new Set(sampleRows.slice(0, 20).map(r => String(r[0] || '')));
+      if (uniqueFirstCells.size > 10) {
+        score += 20; // Good variety
+      } else if (uniqueFirstCells.size <= 3) {
+        score -= 20; // Too repetitive
+      }
+      
+      console.log(`   "${sheetName}": ${rowCount} rows, score: ${score}${hasProductIndicators ? ' [HAS_PRODUCT_DATA]' : ''}${hasMetadataIndicators ? ' [HAS_METADATA]' : ''}`);
+      
+      if (score > bestScore) {
+        bestScore = score;
         bestSheet = sheetName;
       }
     }
     
-    console.log(`📊 Using sheet with most data: "${bestSheet}" (${maxRows} rows)`);
+    console.log(`📊 Using sheet with best quality score: "${bestSheet}" (score: ${bestScore})`);
     const worksheet = workbook.Sheets[bestSheet];
     
     // Convert to array of arrays - keep all values as strings
@@ -845,29 +906,51 @@ function findDataHeaderFromRows(rows: any[][]): { headers: string[]; headerIndex
     
     // Convert row cells to individual lowercase strings for matching
     const cellsLower = row.map((cell: any) => String(cell || '').toLowerCase().trim());
+    const cellsJoined = cellsLower.join(' ');
     
-    // Look for common column headers - be flexible with matching
-    const dataIndicators = [
-      'date', 'sku', 'oem', 'item', 'product', 'description', 'desc',
-      'quantity', 'qty', 'price', 'cost', 'amount', 'total',
-      'part', 'number', 'model', 'uom', 'name', 'po', 'order'
+    // CRITICAL FIX: Check if this is a HEADER ROW first (before checking metadata)
+    // Header rows have multiple column-like terms
+    const productIndicators = [
+      'sku', 'oem', 'item', 'product', 'description',
+      'quantity', 'qty', 'price', 'cost', 'amount',
+      'part', 'number', 'uom', 'staples', 'depot', 'sale'
     ];
     
     // Check how many cells contain these indicators
-    const matchCount = cellsLower.filter(cell => 
-      dataIndicators.some(indicator => cell === indicator || cell.includes(indicator))
-    ).length;
+    const matchCount = cellsLower.filter(cell => {
+      // Must be non-empty and contain a product indicator
+      if (!cell || cell.length === 0) return false;
+      return productIndicators.some(indicator => 
+        cell === indicator || cell.includes(indicator)
+      );
+    }).length;
     
-    console.log(`   Row ${i + 1}: ${matchCount} header keywords found, first 8: [${row.slice(0, 8).join(', ')}]`);
+    // Count non-empty cells
+    const nonEmptyCount = cellsLower.filter(c => c && c.length > 0).length;
     
-    // If we find 2+ header keywords, it's likely a header row (regardless of numeric content)
-    // Lowered from 3 to 2 to handle files with minimal but clear headers like "Part Number, Description"
-    if (matchCount >= 2) {
-      console.log(`✓ Found data header at row ${i + 1} (${matchCount} header keywords)`);
+    // IMPROVED: If row has 3+ product indicators AND at least 5 non-empty columns, it's likely a HEADER ROW
+    // This should be checked BEFORE the metadata check
+    if (matchCount >= 3 && nonEmptyCount >= 5) {
+      console.log(`   Row ${i + 1}: ${matchCount} header keywords, ${nonEmptyCount} non-empty cells`);
+      console.log(`✓ Found data header at row ${i + 1} (${matchCount} keywords, ${nonEmptyCount} columns)`);
       const headers = row.map((cell: any) => cell?.toString().trim() || '');
-      console.log(`📍 Headers: ${JSON.stringify(headers.slice(0, 10))}`);
+      console.log(`📍 Headers: ${JSON.stringify(headers.slice(0, 15))}`);
       return { headers, headerIndex: i };
     }
+    
+    // Skip metadata rows (report headers, customer info, etc.) - but ONLY if not a header row
+    const metadataIndicators = [
+      'report comments', 'report run date', 'report date range', 
+      'customer number', 'detail for all shipped'
+    ];
+    
+    const isMetadataRow = metadataIndicators.some(indicator => cellsJoined.includes(indicator));
+    if (isMetadataRow) {
+      console.log(`   Row ${i + 1}: SKIPPED (metadata row)`);
+      continue; // Skip this row and continue searching
+    }
+    
+    console.log(`   Row ${i + 1}: ${matchCount} header keywords, ${nonEmptyCount} non-empty cells, first 8: [${row.slice(0, 8).join(', ')}]`);
   }
   
   // Fallback: No headers found, use first data row and create synthetic column names
@@ -1050,14 +1133,52 @@ function detectColumnTypes(rows: Record<string, string>[], headers: string[]): {
   });
   
   // Detect product name/description: long text with spaces
+  // IMPORTANT: Exclude metadata columns (account, customer, ship-to, bill-to, address)
+  // ENHANCED: Check for repetitive values (metadata columns often repeat the same values)
   let productNameCol = headers.find(h => {
     const a = analysis[h];
+    const headerLower = h.toLowerCase();
+    
+    // Exclude metadata columns
+    if (/\b(account|customer|ship.*to|bill.*to|shipto|billto|address|location|site|name|city|state|zip)\b/i.test(headerLower)) {
+      return false;
+    }
+    
+    // Check for repetitive values (metadata like "KNOX COMMUNITY HOSPITAL" repeating)
+    const values = sample.map(r => String(r[h] || '')).filter(v => v.trim().length > 0);
+    const uniqueValues = new Set(values);
+    const repetitionRatio = uniqueValues.size / values.length; // Lower = more repetitive
+    
+    // If column is highly repetitive (< 30% unique), likely metadata
+    if (repetitionRatio < 0.3 && values.length > 3) {
+      return false;
+    }
+    
     return a.looksLikeDescription > 0.5 || (a.hasText > 0.7 && a.avgLength > 20);
   });
   
   // Detect SKU columns: alphanumeric, medium length, few spaces
+  // IMPORTANT: Exclude metadata columns
+  // ENHANCED: Check for repetitive values and data variety
   const skuCols = headers.filter(h => {
     if (h === priceCol || h === qtyCol || h === productNameCol) return false;
+    const headerLower = h.toLowerCase();
+    
+    // Exclude metadata columns
+    if (/\b(account|customer|ship.*to|bill.*to|shipto|billto|address|location|site|report|date|city|state|zip|company)\b/i.test(headerLower)) {
+      return false;
+    }
+    
+    // Check for repetitive values (SKUs should be mostly unique)
+    const values = sample.map(r => String(r[h] || '')).filter(v => v.trim().length > 0);
+    const uniqueValues = new Set(values);
+    const repetitionRatio = uniqueValues.size / values.length;
+    
+    // SKUs should be mostly unique (> 50% unique values)
+    if (repetitionRatio < 0.5 && values.length > 3) {
+      return false;
+    }
+    
     const a = analysis[h];
     return a.looksLikeSku > 0.3 || (a.hasText > 0.5 && a.avgLength >= 3 && a.avgLength <= 30);
   });
@@ -1129,19 +1250,97 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   // ======================================================================
   
   if (!productNameCol) {
-    productNameCol = headers.find(h => 
-      /product\s*description|item\s*description|product\s*name/i.test(h)
-    ) || headers.find(h => 
-      /^description$/i.test(h.trim()) || /^item$/i.test(h.trim()) || /^product$/i.test(h.trim())
-    );
+    // CRITICAL FIX: FORCE prioritization and exclusion of metadata columns
+    
+    // Priority 1: Explicit product/item description columns (MOST SPECIFIC)
+    productNameCol = headers.find(h => {
+      const lower = h.toLowerCase().trim();
+      
+      // Exact match for common column names
+      if (lower === 'item description' || 
+          lower === 'product description' || 
+          lower === 'product name' ||
+          lower === 'item name') {
+        return true;
+      }
+      
+      // Must contain "item" or "product" AND "description" or "name"
+      return (lower.includes('item') || lower.includes('product')) && 
+             (lower.includes('description') || lower.includes('name')) &&
+             // EXCLUDE account/customer/company columns even if they say "name"
+             !lower.includes('account') && 
+             !lower.includes('customer') && 
+             !lower.includes('company') &&
+             !lower.includes('ship') &&
+             !lower.includes('bill');
+    });
+    
+    // Priority 2: Generic description column (but STRICT exclusions)
+    if (!productNameCol) {
+      productNameCol = headers.find(h => {
+        const lower = h.trim().toLowerCase();
+        
+        // HARD EXCLUSIONS - never use these as product name
+        const excludePatterns = [
+          'account', 'customer', 'ship', 'bill', 'address', 
+          'location', 'site', 'company', 'vendor', 'supplier',
+          'po', 'order', 'date', 'report'
+        ];
+        
+        for (const pattern of excludePatterns) {
+          if (lower.includes(pattern)) {
+            return false;
+          }
+        }
+        
+        // Must be standalone "description" or "item" or "product"
+        return lower === 'description' || lower === 'item' || lower === 'product';
+      });
+    }
   }
   
   // IMPROVED: Detect ALL SKU-like columns (not just first match)
-  const oemCol = headers.find(h => /oem|part\s*number|part\s*#|mfg.*part/i.test(h));
-  const wholesalerCol = headers.find(h => /wholesaler.*product.*code|wholesaler.*code/i.test(h));
-  const staplesSkuCol = headers.find(h => /staples.*sku|staples.*item/i.test(h));
-  const depotCol = headers.find(h => /depot.*product.*code|depot.*code/i.test(h));
-  const genericSkuCol = headers.find(h => /^sku$/i.test(h.trim()) || /^item.*number$/i.test(h.trim()) || /catalog/i.test(h));
+  // Enhanced patterns to catch variations like "OEM Number", "Staples Sku Number", etc.
+  const oemCol = headers.find(h => {
+    const lower = h.toLowerCase().trim();
+    return lower === 'oem number' || 
+           lower === 'oem' || 
+           /\b(oem|part.*number|part.*#|mfg.*part|mfg.*number)\b/i.test(h);
+  });
+  const wholesalerCol = headers.find(h => /wholesaler.*(product.*code|sku|number)/i.test(h));
+  const staplesSkuCol = headers.find(h => {
+    const lower = h.toLowerCase().trim();
+    return lower === 'staples sku number' || 
+           lower === 'staples sku' ||
+           /staples.*(sku|number|item)/i.test(h);
+  });
+  const depotCol = headers.find(h => {
+    const lower = h.toLowerCase().trim();
+    return lower === 'office depot sku' ||
+           /depot.*(product.*code|sku|number)/i.test(h);
+  });
+  const genericSkuCol = headers.find(h => {
+    const lower = h.toLowerCase().trim();
+    return lower === 'sku' || 
+           lower === 'item number' || 
+           lower === 'item#' || 
+           lower === 'catalog number' ||
+           /catalog.*number/i.test(h);
+  });
+  
+  // DEBUG LOGGING: Show which columns were detected (only log once per batch)
+  if (rowNumber === 1) {
+    console.log(`📋 Column Detection Results:`);
+    console.log(`   Product Name: ${productNameCol || 'NOT FOUND'}`);
+    console.log(`   OEM Column: ${oemCol || 'not found'}`);
+    console.log(`   Staples SKU: ${staplesSkuCol || 'not found'}`);
+    console.log(`   Wholesaler SKU: ${wholesalerCol || 'not found'}`);
+    console.log(`   Depot SKU: ${depotCol || 'not found'}`);
+    console.log(`   Generic SKU: ${genericSkuCol || 'not found'}`);
+    console.log(`   Quantity Column: ${qtyCol || 'NOT FOUND'}`);
+    console.log(`   Price Column: ${priceCol || 'NOT FOUND'}`);
+    console.log(`   All Headers: [${headers.join(', ')}]`);
+  }
   
   if (oemCol) skuColumnMap['oem'] = oemCol;
   if (wholesalerCol) skuColumnMap['wholesaler'] = wholesalerCol;
@@ -1154,8 +1353,10 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
       const lower = h.toLowerCase().trim();
       // Exact matches (case-insensitive)
       if (lower === 'qty' || lower === 'quantity' || lower === 'qty sold' || lower === 'quantity sold') return true;
-      // Exclude UOM columns
-      if (/sell\s*uom|in\s*sell/i.test(h)) return false;
+      // FIXED: Include "QTY in Sell UOM" type columns (common in usage reports)
+      if (/qty.*in.*sell|quantity.*in.*sell/i.test(h)) return true;
+      // Exclude standalone UOM columns (columns that are ONLY about UOM, not quantity)
+      if (/^(sell\s*uom|uom)$/i.test(lower)) return false;
       // Pattern matches
       return /^qty|^quantity|qty\s*sold|quantity\s*sold/i.test(lower);
     });
@@ -1204,6 +1405,36 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
     }
   }
   
+  // HUMAN-LIKE APPROACH: Check ALL other columns for potential SKU/identifier data
+  // This mimics how a human would scan across the entire row looking for any useful identifiers
+  for (const header of headers) {
+    const cellValue = row[header]?.toString().trim();
+    
+    // Skip if empty or already captured
+    if (!cellValue || cellValue.length === 0) continue;
+    if (skuFields.all_skus.includes(cellValue)) continue;
+    
+    // Skip obvious metadata columns
+    const headerLower = header.toLowerCase();
+    if (/\b(account|customer|ship|bill|address|location|city|state|zip|phone|email|date|qty|quantity|price|cost|uom|total|category)\b/i.test(headerLower)) {
+      continue;
+    }
+    
+    // Skip the product name column (already captured)
+    if (header === productNameCol) continue;
+    
+    // Look for values that look like SKUs/part numbers (alphanumeric, 3-30 chars, not just numbers)
+    if (cellValue.length >= 3 && cellValue.length <= 30) {
+      // Must have at least one letter and be reasonably formatted
+      if (/[A-Z]/i.test(cellValue) && !/^\d+$/.test(cellValue)) {
+        // Not purely numeric, looks like it could be a SKU/part number
+        if (!skuFields.all_skus.includes(cellValue)) {
+          skuFields.all_skus.push(cellValue);
+        }
+      }
+    }
+  }
+  
   // Primary SKU priority: OEM > Wholesaler > Staples > Depot > Generic
   const primarySku = skuFields.oem_number || 
                      skuFields.wholesaler_code || 
@@ -1220,11 +1451,14 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
     return null;
   }
   
-  // Skip obvious header/metadata rows
+  // Skip obvious header/metadata rows ONLY
   if (productName && productName.length > 0 && 
       /^(account|customer|report|date|total|page|subtotal)/i.test(productName)) {
     return null;
   }
+  
+  // IMPORTANT: Don't reject rows just because product name looks wrong
+  // We might still have valid SKUs (OEM, Staples, etc.) that can match!
   
   // Extract quantity and price (with fallbacks)
   const quantityStr = qtyCol ? row[qtyCol]?.replace(/[^0-9.]/g, '') : '1';
@@ -1251,6 +1485,11 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
     const displayName = productName || primarySku || 'Unknown';
     const skuCount = skuFields.all_skus.length;
     console.log(`   Row ${rowNumber}: ✓ "${displayName}" | SKUs: ${skuCount} | Qty: ${quantity} | Price: $${unitPrice.toFixed(2)} | Confidence: ${(confidence*100).toFixed(0)}%`);
+    
+    // DEBUG: Show all extracted SKUs
+    if (skuFields.all_skus.length > 0) {
+      console.log(`      📦 Extracted SKUs: ${JSON.stringify(skuFields)}`);
+    }
     
     if (!hasPrice) {
       console.log(`      ⚠️ No price - will use fallback pricing`);
@@ -1472,10 +1711,31 @@ async function matchSingleProduct(item: any, index: number, total: number) {
   }
 
   // ======================================================================
-  // TIER 4: Full-text search on product name
+  // TIER 4: Description field search (search description and long_description)
+  // ======================================================================
+  if (!bestMatch || bestMatch.score < 0.90) {
+    // Try searching SKUs in description fields (sometimes OEM numbers appear in descriptions)
+    if (item.sku_fields && item.sku_fields.all_skus && item.sku_fields.all_skus.length > 0) {
+      console.log(`     🎯 TIER 4A: Trying SKU search in description fields...`);
+      
+      for (const sku of item.sku_fields.all_skus) {
+        if (!sku || sku.length < 3) continue;
+        
+        const match = await searchInDescriptions(sku);
+        if (match && (!bestMatch || match.score > bestMatch.score)) {
+          console.log(`        ✅ Found in descriptions: ${match.product.product_name} (score: ${match.score.toFixed(2)})`);
+          bestMatch = match;
+          break;
+        }
+      }
+    }
+  }
+  
+  // ======================================================================
+  // TIER 5: Full-text search on product name
   // ======================================================================
   if (!bestMatch || bestMatch.score < 0.85) {
-    console.log(`     🎯 TIER 4: Trying full-text search...`);
+    console.log(`     🎯 TIER 5: Trying full-text search...`);
     
     const match = await fullTextSearch(item.raw_product_name);
     matchLog.push({
@@ -1493,10 +1753,10 @@ async function matchSingleProduct(item: any, index: number, total: number) {
   }
 
   // ======================================================================
-  // TIER 5: Semantic search
+  // TIER 6: Semantic search
   // ======================================================================
   if (!bestMatch || bestMatch.score < 0.75) {
-    console.log(`     🎯 TIER 5: Trying semantic search...`);
+    console.log(`     🎯 TIER 6: Trying semantic search...`);
     
     const match = await semanticSearch(item.raw_product_name);
     matchLog.push({
@@ -1514,12 +1774,12 @@ async function matchSingleProduct(item: any, index: number, total: number) {
   }
 
   // ======================================================================
-  // TIER 6: AI Agent (optional, for low-confidence items)
+  // TIER 7: AI Agent (optional, for low-confidence items)
   // ======================================================================
   const useAIForLowConfidence = false; // Set to true to enable AI fallback
   
   if (useAIForLowConfidence && (!bestMatch || bestMatch.score < 0.65)) {
-    console.log(`     🤖 TIER 6: Using AI agent (low confidence)...`);
+    console.log(`     🤖 TIER 7: Using AI agent (low confidence)...`);
     
     const match = await aiAgentMatch(item);
     matchLog.push({
@@ -1651,6 +1911,43 @@ Respond with ONLY a JSON object in this exact format:
     console.error('AI agent error:', error);
     return null;
   }
+}
+
+/**
+ * Search in description and long_description fields
+ * Useful for finding products where SKU/OEM appears in description
+ */
+async function searchInDescriptions(searchTerm: string) {
+  if (!searchTerm || searchTerm.length < 3) return null;
+
+  const cleanTerm = searchTerm.trim().toUpperCase();
+
+  // Search in description and long_description using ILIKE
+  const { data, error } = await supabase
+    .from('master_products')
+    .select('*')
+    .or(`description.ilike.%${cleanTerm}%,long_description.ilike.%${cleanTerm}%,product_name.ilike.%${cleanTerm}%`)
+    .eq('active', true)
+    .limit(3);
+
+  if (!error && data && data.length > 0) {
+    // Return first match with a score based on where it was found
+    const bestMatch = data[0];
+    let score = 0.75; // Base score for description match
+    
+    // Higher score if found in product_name
+    if (bestMatch.product_name?.toUpperCase().includes(cleanTerm)) {
+      score = 0.90;
+    }
+    
+    return {
+      product: bestMatch,
+      score,
+      method: 'description_search'
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -2085,15 +2382,20 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
   const breakdown: any[] = [];
 
   for (const item of matchedItems) {
-    // Skip if no match found
+    // Skip if no match found, but STILL count current cost in baseline
     if (!item.matched_product) {
+      // Include user's current spend in total, even if we can't offer savings
+      const currentCost = (item.unit_price || 0) * (item.quantity || 0);
+      totalCurrentCost += currentCost;
+      totalOptimizedCost += currentCost; // No savings possible, so optimized = current
+      
       breakdown.push({
         ...item,
         savings: null,
         recommendation: 'No match found'
       });
       itemsSkipped++;
-      console.log(`  ⊘ Skipped (no match): ${item.raw_product_name}`);
+      console.log(`  ⊘ Skipped (no match, but counted $${currentCost.toFixed(2)} in baseline): ${item.raw_product_name}`);
       continue;
     }
 

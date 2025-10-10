@@ -1,10 +1,45 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 9, 2025
+**Last Updated:** October 10, 2025 (Savings Percentage Consistency Fix)
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
+- ✅ **SAVINGS PERCENTAGE FIX (Oct 10, 2025):** Consistent baseline cost calculation
+  - ✅ Fixed savings percentage inconsistency where same document yielded different percentages
+  - ✅ Root cause: Unmatched items were excluded from baseline cost, causing non-deterministic percentages
+  - ✅ Solution: Include ALL items (matched + unmatched) in total_current_cost baseline
+  - ✅ Unmatched items now contribute to baseline with $0 savings (realistic representation)
+  - ✅ Result: Savings percentage now accurately represents savings as % of total documented spend
+  - ✅ Formula remains: `savings_percentage = (total_savings / total_current_cost) × 100`
+  - ✅ Example: Same document now consistently shows same percentage regardless of match success rate
+- ✅ **HUMAN-LIKE EXTRACTION (Oct 10, 2025):** Row-by-row comprehensive column scanning
+  - ✅ System now scans ALL columns in each row (like a human would) for potential identifiers
+  - ✅ Extracts any alphanumeric data (3-30 chars) that could be SKU/part numbers
+  - ✅ Tries matching on ALL extracted identifiers (maximizes match success rate)
+  - ✅ Added Tier 4A: Search in description/long_description fields for SKUs
+  - ✅ Enhanced header detection to prioritize product indicators over metadata
+  - ✅ Repetition analysis prevents selecting metadata columns (>70% repetition = metadata)
+  - ✅ Searches 10+ database columns: sku, oem_number, wholesaler_sku, staples_sku, depot_sku, product_name, description, long_description
+  - ✅ Result: System can now match items even with mixed metadata/product columns
+- ✅ **CRITICAL FIX (Oct 9, 2025 - Late Evening):** Fixed column detection for usage reports with metadata
+  - ✅ Intelligent column detection now EXCLUDES account/customer/shipping metadata columns
+  - ✅ Prioritizes "Item Description" over "Account Name" for product names
+  - ✅ Fixed "QTY in Sell UOM" quantity column detection (was incorrectly excluded)
+  - ✅ Enhanced SKU column patterns for "OEM Number" and "Staples Sku Number"
+  - ✅ Improved Excel sheet selection with quality scoring (product data vs metadata)
+  - ✅ Solves issue where all items extracted as "KNOX COMMUNITY HOSPITAL" (account name)
+- ✅ **COMPATIBILITY GUARDRAILS (Oct 9, 2025 - Evening):** Hard constraints for accurate recommendations
+  - ✅ Added 9 pre-flight compatibility checks to prevent cross-brand/color/category mismatches
+  - ✅ Brand matching: HP ≠ Brother ≠ Canon ≠ Xerox (strict enforcement)
+  - ✅ Color matching: Black ≠ Cyan ≠ Magenta ≠ Yellow (strict for cartridges)
+  - ✅ Category matching: ink_cartridge ≠ toner_cartridge (strict enforcement)
+  - ✅ Yield ratio reasonableness: Max 8x improvement to prevent incompatible suggestions
+  - ✅ CPP sanity check: >90% improvement flagged as suspicious
+  - ✅ Never downgrade yield class (XL → Standard blocked)
+  - ✅ Added `compatibility_group` and `model_pattern` columns for granular matching
+  - ✅ Scripts: `fix-missing-color-types.ts`, `populate-compatibility-groups.ts`
+  - ✅ Migration: `add_compatibility_fields.sql`
 - ✅ **MAJOR UPDATE (Oct 9, 2025):** Enhanced document processing with human-like accuracy
   - ✅ Multi-column SKU detection (OEM, Wholesaler, Staples, Depot, Generic) 
   - ✅ 6-tier comprehensive matching strategy (exact, fuzzy, combined, full-text, semantic, AI)
@@ -156,6 +191,8 @@ Master product catalog with pricing and environmental data.
 - `pack_qty_std` (INTEGER) - Standardized pack quantity
 - `ase_unit_price` (DECIMAL(10,4)) - Normalized price per-each (THE GOLDEN RULE)
 - `inventory_status` (TEXT) - in_stock, low, oos
+- `compatibility_group` (TEXT) - Precise compatibility grouping (e.g., "BROTHER_TN7XX_HLLSERIES")
+- `model_pattern` (TEXT) - Model pattern for variant grouping (e.g., "TN7xx" for TN730/TN760/TN750)
 
 **Environmental Data:**
 - `co2_per_unit` (DECIMAL) - CO2 pounds per unit (default: 2.5 for ink, 5.2 for toner)
@@ -192,6 +229,8 @@ Master product catalog with pricing and environmental data.
 - `idx_master_products_active` on `active`
 - `idx_master_products_search` (GIN) on `search_vector`
 - `idx_master_products_embedding` (IVFFlat) on `embedding` for vector search
+- `idx_master_products_compatibility_group` on `compatibility_group` (WHERE NOT NULL)
+- `idx_master_products_model_pattern` on `model_pattern` (WHERE NOT NULL)
 
 **Constraints:**
 - `size_category` must be in: `standard`, `xl`, `xxl`, `bulk`
@@ -522,14 +561,25 @@ The system uses a **5-tier intelligent matching strategy** with deterministic ru
 - **Score: 0.65-0.95** (capped at 0.95, never 1.0)
 - **Method:** `ai_suggested`
 
-### Domain Rules (Toner/Ink Cartridges)
+### Domain Rules (Toner/Ink Cartridges) - ENHANCED WITH GUARDRAILS
 
 The following rules are enforced during matching to prevent mismatches:
 
-1. **Color Match**: Must match `color_type` exactly (black ≠ cyan)
-2. **Yield Class Guard**: Never recommend lower yield (XL → standard is rejected)
-3. **Family Series**: Products must be in same `family_series` for alternatives
-4. **OEM Policy**: Compatible products flagged separately via `oem_vs_compatible`
+**TIER 1: Hard Constraints (MUST NEVER VIOLATE)**
+1. **Category Match**: ink_cartridge ≠ toner_cartridge ≠ office_supplies (strict enforcement)
+2. **Brand Match**: HP ≠ Brother ≠ Canon ≠ Xerox ≠ Epson (no cross-brand recommendations)
+3. **Color Match**: Black ≠ Cyan ≠ Magenta ≠ Yellow (strict for cartridges)
+4. **Yield Class Guard**: Never recommend lower yield (XL → Standard blocked)
+5. **Yield Ratio Reasonableness**: Max 8x page yield improvement (prevents incompatible suggestions)
+6. **CPP Sanity Check**: >90% CPP improvement flagged as suspicious and blocked
+
+**TIER 2: Soft Constraints (Confidence Adjustment)**
+7. **Family Series**: Products should be in same `family_series` for alternatives
+8. **Compatibility Group**: Products with same `compatibility_group` are interchangeable
+9. **Model Pattern**: Products with same `model_pattern` are compatible variants
+10. **OEM Policy**: Compatible products flagged separately via `oem_vs_compatible`
+
+**Better to recommend nothing than to recommend something incompatible.**
 
 ### Document Format Intelligence
 
@@ -569,15 +619,29 @@ cpp = normalized_price / page_yield
 
 CPP is the **primary metric** for optimization recommendations.
 
-### Higher-Yield Optimization
+### Higher-Yield Optimization (WITH COMPATIBILITY GUARDRAILS)
 
-The system suggests higher-yield alternatives using:
+The system suggests higher-yield alternatives using a strict compatibility-first approach:
 
-1. **Family Matching**: Find products in same `family_series`
-2. **Color Matching**: Must match `color_type` exactly
-3. **Yield Filter**: Only equal or higher `yield_class`
-4. **CPP Ranking**: Rank by lowest CPP
-5. **Savings Threshold**: Only recommend if CPP savings ≥ 5% AND dollar savings > $5/year
+**Phase 1: Compatibility Filtering (Guardrails)**
+1. **Brand Filter**: Same brand only (query-level filter)
+2. **Category Filter**: Same category only (query-level filter)
+3. **Color Filter**: Same color only for cartridges (query-level filter)
+4. **Family Matching**: Products in same `family_series`
+
+**Phase 2: Pre-Flight Checks (Hard Stops)**
+5. **Cross-Brand Block**: HP ≠ Brother ≠ Canon (double-check after ranking)
+6. **Cross-Category Block**: Ink ≠ Toner (double-check after ranking)
+7. **Color Mismatch Block**: Black ≠ Cyan (double-check after ranking)
+8. **Yield Ratio Check**: Max 8x improvement (realistic compatibility)
+9. **CPP Sanity Check**: Max 90% improvement (prevents false matches)
+
+**Phase 3: Optimization Ranking**
+10. **Yield Filter**: Only equal or higher `yield_class`
+11. **CPP Ranking**: Rank by lowest CPP (cost per page)
+12. **Savings Threshold**: Only recommend if CPP savings ≥ 5% AND dollar savings > $5/year
+
+**Result**: Only compatible, verified alternatives are suggested. No recommendation is better than a wrong recommendation.
 
 ### Recommendation Logic
 
