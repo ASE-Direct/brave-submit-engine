@@ -928,9 +928,12 @@ function findDataHeaderFromRows(rows: any[][]): { headers: string[]; headerIndex
     // Count non-empty cells
     const nonEmptyCount = cellsLower.filter(c => c && c.length > 0).length;
     
-    // IMPROVED: If row has 3+ product indicators AND at least 5 non-empty columns, it's likely a HEADER ROW
+    // IMPROVED: If row has 2+ product indicators (relaxed from 3), it's likely a HEADER ROW
     // This should be checked BEFORE the metadata check
-    if (matchCount >= 3 && nonEmptyCount >= 5) {
+    // Relaxed criteria: 2+ keywords OR 5+ non-empty cells with at least 1 keyword
+    const isLikelyHeader = (matchCount >= 2) || (matchCount >= 1 && nonEmptyCount >= 5);
+    
+    if (isLikelyHeader) {
       console.log(`   Row ${i + 1}: ${matchCount} header keywords, ${nonEmptyCount} non-empty cells`);
       console.log(`✓ Found data header at row ${i + 1} (${matchCount} keywords, ${nonEmptyCount} columns)`);
       const headers = row.map((cell: any) => cell?.toString().trim() || '');
@@ -1405,23 +1408,46 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
     }
   }
   
-  // HUMAN-LIKE APPROACH: Check ALL other columns for potential SKU/identifier data
-  // This mimics how a human would scan across the entire row looking for any useful identifiers
+  // HUMAN-LIKE APPROACH: Check ALL other columns for potential identifiers AND descriptions
+  // This mimics how a human would scan across the entire row looking for any useful data
+  let longestText = productName; // Track the longest text field found (likely the real description)
+  
   for (const header of headers) {
     const cellValue = row[header]?.toString().trim();
     
-    // Skip if empty or already captured
+    // Skip if empty
     if (!cellValue || cellValue.length === 0) continue;
-    if (skuFields.all_skus.includes(cellValue)) continue;
     
-    // Skip obvious metadata columns
     const headerLower = header.toLowerCase();
-    if (/\b(account|customer|ship|bill|address|location|city|state|zip|phone|email|date|qty|quantity|price|cost|uom|total|category)\b/i.test(headerLower)) {
-      continue;
+    
+    // CRITICAL FIX: If we don't have a product name yet, look for ANY longer text that could be a description
+    // This handles cases where the DESCRIPTION column wasn't detected properly
+    if (cellValue.length > longestText.length && cellValue.length >= 15) {
+      // Check if this looks like a product description (has spaces, reasonable length)
+      const hasSpaces = /\s/.test(cellValue);
+      const notTooLong = cellValue.length <= 200;
+      const notMetadata = !/\b(account|customer|ship|bill|address|location|company name|vendor name)\b/i.test(headerLower);
+      const notHeader = !/\b(description|product|item|sku|oem|price|qty)\b/i.test(cellValue.toLowerCase());
+      
+      if (hasSpaces && notTooLong && notMetadata && notHeader) {
+        longestText = cellValue;
+        // If we didn't detect a product name column, use this
+        if (!productNameCol || productName.length === 0) {
+          console.log(`      🔍 Found description in column "${header}": "${cellValue.substring(0, 50)}..."`);
+        }
+      }
     }
+    
+    // Skip if already captured as SKU
+    if (skuFields.all_skus.includes(cellValue)) continue;
     
     // Skip the product name column (already captured)
     if (header === productNameCol) continue;
+    
+    // Skip obvious metadata columns for SKU extraction
+    if (/\b(account|customer|ship|bill|address|location|city|state|zip|phone|email|date)\b/i.test(headerLower)) {
+      continue;
+    }
     
     // Look for values that look like SKUs/part numbers (alphanumeric, 3-30 chars, not just numbers)
     if (cellValue.length >= 3 && cellValue.length <= 30) {
@@ -1435,6 +1461,9 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
     }
   }
   
+  // Use the longest text found as the product name if we didn't have one
+  const finalProductName = longestText || 'Unknown Product';
+  
   // Primary SKU priority: OEM > Wholesaler > Staples > Depot > Generic
   const primarySku = skuFields.oem_number || 
                      skuFields.wholesaler_code || 
@@ -1447,13 +1476,13 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   skuFields.all_skus = [...new Set(skuFields.all_skus)];
   
   // IMPROVED: More lenient validation - extract even with missing data
-  if (!productName && skuFields.all_skus.length === 0) {
+  if (finalProductName === 'Unknown Product' && skuFields.all_skus.length === 0) {
     return null;
   }
   
   // Skip obvious header/metadata rows ONLY
-  if (productName && productName.length > 0 && 
-      /^(account|customer|report|date|total|page|subtotal)/i.test(productName)) {
+  if (finalProductName && finalProductName.length > 0 && 
+      /^(account|customer|report|date|total|page|subtotal|description|part\s*number)/i.test(finalProductName)) {
     return null;
   }
   
@@ -1470,7 +1499,7 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   // Data quality assessment
   const hasPrice = unitPrice > 0;
   const hasSku = skuFields.all_skus.length > 0;
-  const hasDescription = productName.length > 0;
+  const hasDescription = finalProductName !== 'Unknown Product' && finalProductName.length > 0;
   const hasQuantity = quantity > 0;
   
   // Calculate extraction confidence
@@ -1482,7 +1511,7 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   
   // Log extraction details
   if (rowNumber > 0) {
-    const displayName = productName || primarySku || 'Unknown';
+    const displayName = finalProductName || primarySku || 'Unknown';
     const skuCount = skuFields.all_skus.length;
     console.log(`   Row ${rowNumber}: ✓ "${displayName}" | SKUs: ${skuCount} | Qty: ${quantity} | Price: $${unitPrice.toFixed(2)} | Confidence: ${(confidence*100).toFixed(0)}%`);
     
@@ -1498,11 +1527,11 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   
   // Sanity checks with warnings (but don't reject)
   if (quantity > 10000) {
-    console.warn(`   Row ${rowNumber}: ⚠️ Very high quantity ${quantity} for ${productName}`);
+    console.warn(`   Row ${rowNumber}: ⚠️ Very high quantity ${quantity} for ${finalProductName}`);
   }
   
   if (unitPrice > 100000) {
-    console.warn(`   Row ${rowNumber}: ⚠️ Very high price $${unitPrice} for ${productName}`);
+    console.warn(`   Row ${rowNumber}: ⚠️ Very high price $${unitPrice} for ${finalProductName}`);
   }
   
   // Calculate total
@@ -1514,9 +1543,9 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   
   return {
     rowNumber,
-    raw_product_name: productName || 'Unknown Product',
+    raw_product_name: finalProductName,
     raw_sku: primarySku,
-    raw_description: productName || primarySku || 'No description',
+    raw_description: finalProductName,
     sku_fields: skuFields,
     quantity,
     unit_price: unitPrice,
@@ -1710,6 +1739,29 @@ async function matchSingleProduct(item: any, index: number, total: number) {
     }
   }
 
+  // ======================================================================
+  // TIER 3.5: Simple ILIKE search on product name (handles special characters)
+  // ======================================================================
+  if (!bestMatch || bestMatch.score < 0.90) {
+    if (item.raw_product_name && item.raw_product_name !== 'Unknown Product' && item.raw_product_name.length > 5) {
+      console.log(`     🎯 TIER 3.5: Trying ILIKE search on product name...`);
+      
+      const match = await simpleLikeSearch(item.raw_product_name);
+      matchLog.push({
+        method: 'ilike_search',
+        attempted_value: item.raw_product_name.substring(0, 50),
+        score: match ? match.score : 0,
+        product_id: match?.product?.id,
+        timestamp: new Date()
+      });
+      
+      if (match && (!bestMatch || match.score > bestMatch.score)) {
+        console.log(`        ✅ ILIKE match: ${match.product.product_name} (score: ${match.score.toFixed(2)})`);
+        bestMatch = match;
+      }
+    }
+  }
+  
   // ======================================================================
   // TIER 4: Description field search (search description and long_description)
   // ======================================================================
@@ -1911,6 +1963,70 @@ Respond with ONLY a JSON object in this exact format:
     console.error('AI agent error:', error);
     return null;
   }
+}
+
+/**
+ * Simple ILIKE search on product_name field
+ * Handles special characters that break full-text search (like /, -, etc.)
+ * This is more reliable than full-text for exact product name matching
+ */
+async function simpleLikeSearch(productName: string) {
+  if (!productName || productName.length < 5) return null;
+
+  const cleanName = productName.trim();
+
+  // Try exact ILIKE match first
+  const { data, error } = await supabase
+    .from('master_products')
+    .select('*')
+    .ilike('product_name', `%${cleanName}%`)
+    .eq('active', true)
+    .limit(5);
+
+  if (!error && data && data.length > 0) {
+    // Calculate match score based on how close the match is
+    const matches = data.map(product => {
+      const productNameLower = product.product_name?.toLowerCase() || '';
+      const searchLower = cleanName.toLowerCase();
+      
+      // Exact match
+      if (productNameLower === searchLower) {
+        return { product, score: 1.0 };
+      }
+      
+      // Contains exact string
+      if (productNameLower.includes(searchLower)) {
+        const lengthRatio = searchLower.length / productNameLower.length;
+        // Score based on how much of the product name is the search term
+        return { product, score: 0.92 + (lengthRatio * 0.07) };
+      }
+      
+      // Partial match (search term contains product name or vice versa)
+      if (searchLower.includes(productNameLower)) {
+        return { product, score: 0.88 };
+      }
+      
+      // Word-level match
+      const searchWords = new Set(searchLower.split(/\s+/));
+      const productWords = new Set(productNameLower.split(/\s+/));
+      const commonWords = [...searchWords].filter(word => productWords.has(word));
+      const matchRatio = commonWords.length / Math.max(searchWords.size, productWords.size);
+      
+      return { product, score: 0.80 + (matchRatio * 0.10) };
+    });
+    
+    // Return best match
+    matches.sort((a, b) => b.score - a.score);
+    const bestMatch = matches[0];
+    
+    return {
+      product: bestMatch.product,
+      score: bestMatch.score,
+      method: 'ilike_search'
+    };
+  }
+
+  return null;
 }
 
 /**
