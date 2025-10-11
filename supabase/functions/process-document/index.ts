@@ -1122,18 +1122,40 @@ function detectColumnTypes(rows: Record<string, string>[], headers: string[]): {
     };
   });
   
-  // Detect price column: numeric, often has decimals, avg value in price range (1-500), may have $
+  // Detect price column: FIRST try explicit name match, THEN use heuristics
   let priceCol = headers.find(h => {
-    const a = analysis[h];
-    return a.numeric > 0.7 && a.avgValue > 1 && a.avgValue < 1000 && (a.hasDecimals > 0.3 || a.hasDollarSign > 0);
+    const headerLower = h.toLowerCase().trim();
+    return /\b(price|cost|unit.*price|each.*price)\b/i.test(headerLower);
   });
   
-  // Detect quantity column: numeric, low avg value (1-100), rarely decimals
+  // Fallback: use heuristics if no explicit match
+  if (!priceCol) {
+    priceCol = headers.find(h => {
+      const a = analysis[h];
+      return a.numeric > 0.7 && a.avgValue > 1 && a.avgValue < 1000 && (a.hasDecimals > 0.3 || a.hasDollarSign > 0);
+    });
+  }
+  
+  // Detect quantity column: FIRST try explicit name match, THEN use heuristics
   let qtyCol = headers.find(h => {
     if (h === priceCol) return false; // Don't reuse price column
-    const a = analysis[h];
-    return a.numeric > 0.7 && a.avgValue >= 1 && a.avgValue <= 1000 && a.hasDecimals < 0.3;
+    const headerLower = h.toLowerCase().trim();
+    // Match: qty, quantity, qnty, quan, order qty, ship qty, etc.
+    return /\b(qty|quantity|qnty|quan|units?|count|ordered|shipped)\b/i.test(headerLower) &&
+           !/\b(account|customer|date|price|cost|order\s*total|amount)\b/i.test(headerLower);
   });
+  
+  // Fallback: use heuristics if no explicit match
+  if (!qtyCol) {
+    qtyCol = headers.find(h => {
+      if (h === priceCol) return false; // Don't reuse price column
+      const a = analysis[h];
+      const headerLower = h.toLowerCase().trim();
+      // Exclude columns with date-related names
+      if (/\b(date|day|month|year|time)\b/i.test(headerLower)) return false;
+      return a.numeric > 0.7 && a.avgValue >= 1 && a.avgValue <= 1000 && a.hasDecimals < 0.3;
+    });
+  }
   
   // Detect product name/description: long text with spaces
   // IMPORTANT: Exclude metadata columns (account, customer, ship-to, bill-to, address)
@@ -1208,15 +1230,42 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   let productNameCol, qtyCol, priceCol;
   let skuColumnMap: Record<string, string> = {};
   
-  // Use intelligent column detection if provided (for unlabeled columns)
-  if (detectedCols) {
-    priceCol = detectedCols.priceCol;
-    qtyCol = detectedCols.qtyCol;
-    productNameCol = detectedCols.productNameCol;
+  // CRITICAL FIX: Try explicit column name matching FIRST before using intelligent detection
+  // This prevents false positives when files have proper headers but also some empty columns
+  
+  // Try to find quantity column by explicit name
+  qtyCol = headers.find(h => {
+    const lower = h.toLowerCase().trim();
+    // Exact matches (case-insensitive)
+    if (lower === 'qty' || lower === 'quantity' || lower === 'qty sold' || lower === 'quantity sold') return true;
+    // Include "QTY in Sell UOM" type columns
+    if (/qty.*in.*sell|quantity.*in.*sell/i.test(h)) return true;
+    // Exclude standalone UOM columns
+    if (/^(sell\s*uom|uom)$/i.test(lower)) return false;
+    // Pattern matches
+    return /^qty|^quantity|qty\s*sold|quantity\s*sold/i.test(lower);
+  });
+  
+  // Try to find price column by explicit name
+  priceCol = headers.find(h => {
+    const lower = h.toLowerCase().trim();
+    // Exact matches (case-insensitive)
+    if (lower === 'sale' || lower === 'price' || lower === 'unit price' || lower === 'unit cost') return true;
+    // Support various price column formats
+    if (/v\d+\s*price|current\s*price|customer\s*price|your\s*price/i.test(h)) return true;
+    // General pattern matches, excluding total/extended
+    return /(unit\s*price|unit\s*cost|price|cost|amount|sale)/i.test(h) && !/total|extended|supplier\s*id/i.test(h);
+  });
+  
+  // Use intelligent column detection as FALLBACK (only if explicit matching failed)
+  if (detectedCols && (!qtyCol || !priceCol || !productNameCol)) {
+    if (!priceCol) priceCol = detectedCols.priceCol;
+    if (!qtyCol) qtyCol = detectedCols.qtyCol;
+    if (!productNameCol) productNameCol = detectedCols.productNameCol;
     detectedCols.skuCols.forEach((col, idx) => {
       skuColumnMap[`detected_${idx}`] = col;
     });
-  } else if (usingSyntheticHeaders) {
+  } else if (usingSyntheticHeaders && (!qtyCol || !priceCol)) {
     // Fallback: Position-based detection on this single row
     const values = headers.map(h => row[h]);
     
@@ -1351,31 +1400,7 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   if (depotCol) skuColumnMap['depot'] = depotCol;
   if (genericSkuCol) skuColumnMap['generic'] = genericSkuCol;
   
-  if (!qtyCol) {
-    qtyCol = headers.find(h => {
-      const lower = h.toLowerCase().trim();
-      // Exact matches (case-insensitive)
-      if (lower === 'qty' || lower === 'quantity' || lower === 'qty sold' || lower === 'quantity sold') return true;
-      // FIXED: Include "QTY in Sell UOM" type columns (common in usage reports)
-      if (/qty.*in.*sell|quantity.*in.*sell/i.test(h)) return true;
-      // Exclude standalone UOM columns (columns that are ONLY about UOM, not quantity)
-      if (/^(sell\s*uom|uom)$/i.test(lower)) return false;
-      // Pattern matches
-      return /^qty|^quantity|qty\s*sold|quantity\s*sold/i.test(lower);
-    });
-  }
-  
-  if (!priceCol) {
-    priceCol = headers.find(h => {
-      const lower = h.toLowerCase().trim();
-      // Exact matches (case-insensitive)
-      if (lower === 'sale' || lower === 'price' || lower === 'unit price' || lower === 'unit cost') return true;
-      // ENHANCEMENT: Support various price column formats including "v2 Price", "current price", "customer price", etc.
-      if (/v\d+\s*price|current\s*price|customer\s*price|your\s*price/i.test(h)) return true;
-      // General pattern matches, excluding total/extended
-      return /(unit\s*price|unit\s*cost|price|cost|amount|sale)/i.test(h) && !/total|extended|supplier\s*id/i.test(h);
-    });
-  }
+  // Note: qtyCol and priceCol are now detected earlier in the function (see lines 1236-1268)
   
   // Extract values
   const productName = productNameCol ? row[productNameCol]?.trim() : '';
