@@ -5,6 +5,7 @@
  */
 
 import { jsPDF } from 'npm:jspdf@2.5.2';
+import { BAV_LOGO_BASE64 } from './logoData.ts';
 
 interface ReportData {
   customer: {
@@ -81,28 +82,37 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
 
   // ===== PAGE 1: HEADER & SUMMARY =====
 
-  // Add BAV logo text (since we can't easily embed SVG in jsPDF)
-  doc.setFontSize(32);
-  doc.setTextColor(brandNavy);
-  doc.setFont('helvetica', 'bold');
-  doc.text('BAV', margin, yPos);
-  
-  // Add stars
-  doc.setFontSize(12);
-  doc.setTextColor(brandRed);
-  for (let i = 0; i < 5; i++) {
-    doc.text('★', margin + 15 + (i * 4), yPos - 2);
+  // BAV Logo - embedded PNG from public/bav-logo-2.png
+  try {
+    // Add logo image - PNG format works reliably with jsPDF
+    doc.addImage(BAV_LOGO_BASE64, 'PNG', margin, yPos - 5, 50, 24);
+    yPos += 32; // Increased spacing after logo
+  } catch (error) {
+    console.error('Failed to add logo image:', error);
+    // Fallback to text-based logo if image fails
+    doc.setFontSize(18);
+    doc.setTextColor(brandRed);
+    doc.setFont('helvetica', 'normal');
+    const starSpacing = 6;
+    for (let i = 0; i < 5; i++) {
+      doc.text('★', margin + (i * starSpacing), yPos);
+    }
+    yPos += 8;
+    doc.setFontSize(16);
+    doc.setTextColor(brandNavy);
+    doc.setFont('helvetica', 'bold');
+    doc.text('BUY', margin, yPos);
+    yPos += 7;
+    doc.setFontSize(24);
+    doc.setTextColor(brandRed);
+    doc.text('AMERICAN', margin, yPos);
+    yPos += 8;
+    doc.setFontSize(11);
+    doc.setTextColor(brandNavy);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Better American Value', margin, yPos);
+    yPos += 12; // Increased spacing after fallback logo too
   }
-  
-  yPos += 12;
-  
-  // Subtitle
-  doc.setFontSize(11);
-  doc.setTextColor(brandNavy);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Better American Value', margin, yPos);
-  
-  yPos += 15;
 
   // Title
   doc.setFontSize(24);
@@ -236,31 +246,31 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
 
   // ===== PAGE 2+: DETAILED BREAKDOWN =====
   
-  // Only show items with savings
-  const itemsWithSavings = data.breakdown.filter(item => 
-    item.savings && item.savings.cost_savings > 0
+  // Show all items with recommendations (whether they have calculated savings or not)
+  const itemsToShow = data.breakdown.filter(item => 
+    item.recommended_product // Show any item that has a recommendation
   );
 
-  if (itemsWithSavings.length > 0) {
+  if (itemsToShow.length > 0) {
     doc.addPage();
     yPos = 20;
 
     doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(brandNavy);
-    doc.text('Detailed Savings Breakdown', margin, yPos);
+    doc.text('Detailed Product Analysis', margin, yPos);
     
     yPos += 10;
 
-    // Sort by savings (highest first)
-    itemsWithSavings.sort((a, b) => 
+    // Sort by savings (highest first), but include items without savings at the end
+    itemsToShow.sort((a, b) => 
       (b.savings?.cost_savings || 0) - (a.savings?.cost_savings || 0)
     );
 
     let itemCount = 0;
     const maxItemsPerPage = 3;
 
-    for (const item of itemsWithSavings) {
+    for (const item of itemsToShow) {
       // Check if we need a new page
       if (itemCount > 0 && itemCount % maxItemsPerPage === 0) {
         doc.addPage();
@@ -294,11 +304,10 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
         : `SKU: ${item.current_product.sku}`;
       doc.text(currentSkuText, margin + 3, yPos + 9);
       
-      doc.text(
-        `${item.current_product.quantity} × $${item.current_product.unit_price.toFixed(2)} = $${item.current_product.total_cost.toFixed(2)}`,
-        margin + 3,
-        yPos + 13
-      );
+        const currentPriceText = item.current_product.unit_price > 0
+          ? `${item.current_product.quantity} × $${item.current_product.unit_price.toFixed(2)} = $${item.current_product.total_cost.toFixed(2)}`
+          : `${item.current_product.quantity} units (Price not available)`;
+        doc.text(currentPriceText, margin + 3, yPos + 13);
 
       yPos += 18;
 
@@ -322,11 +331,10 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
           : `SKU: ${item.recommended_product.sku}`;
         doc.text(recSkuText, margin + 3, yPos + 9);
         
-        doc.text(
-          `${item.recommended_product.quantity_needed} × $${item.recommended_product.unit_price.toFixed(2)} = $${item.recommended_product.total_cost.toFixed(2)}`,
-          margin + 3,
-          yPos + 13
-        );
+        const recPriceText = item.recommended_product.unit_price > 0
+          ? `${item.recommended_product.quantity_needed} × $${item.recommended_product.unit_price.toFixed(2)} = $${item.recommended_product.total_cost.toFixed(2)}`
+          : `${item.recommended_product.quantity_needed} units (Price not available)`;
+        doc.text(recPriceText, margin + 3, yPos + 13);
         
         if (item.recommended_product.bulk_discount_applied) {
           doc.setTextColor(brandRed);

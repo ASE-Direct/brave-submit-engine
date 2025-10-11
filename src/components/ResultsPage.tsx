@@ -36,6 +36,10 @@ export function ResultsPage({ submissionId }: ResultsPageProps) {
   useEffect(() => {
     if (!results) return;
     
+    // Only trigger confetti if we have actual savings to celebrate
+    const hasSavings = results.summary.total_cost_savings > 0;
+    if (!hasSavings) return;
+    
     // Trigger confetti animation on mount
     const duration = 3000;
     const animationEnd = Date.now() + duration;
@@ -103,6 +107,10 @@ export function ResultsPage({ submissionId }: ResultsPageProps) {
 
   const { summary, customer, report } = results;
 
+  // Check if we have meaningful savings data
+  const hasSavingsData = summary.total_cost_savings > 0 || summary.total_current_cost > 0;
+  const noPricingData = summary.total_current_cost === 0 && summary.total_cost_savings === 0;
+
   return (
     <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
       <div className="text-center space-y-2 mb-8">
@@ -118,8 +126,35 @@ export function ResultsPage({ submissionId }: ResultsPageProps) {
           ))}
         </div>
         <h1 className="text-2xl sm:text-3xl font-bold text-secondary">Processing Complete!</h1>
-        <p className="text-sm sm:text-base text-muted-foreground">Your optimized report is ready</p>
+        <p className="text-sm sm:text-base text-muted-foreground">
+          {noPricingData ? "We've matched your products!" : "Your optimized report is ready"}
+        </p>
       </div>
+
+      {/* Show info banner when no pricing data */}
+      {noPricingData && (
+        <Card className="bg-amber-50 border-2 border-amber-400/50">
+          <CardContent className="pt-6">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-amber-500/10 rounded-lg">
+                <svg className="w-6 h-6 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold text-amber-900 mb-1">Pricing Information Needed</h3>
+                <p className="text-sm text-amber-800">
+                  We successfully matched {summary.total_items} product{summary.total_items !== 1 ? 's' : ''} from your document! 
+                  However, we couldn't calculate potential savings because your document doesn't include current pricing information.
+                </p>
+                <p className="text-sm text-amber-800 mt-2">
+                  <strong>Next step:</strong> Upload a document that includes your current unit prices to see how much you could save with our optimized pricing.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.5fr] gap-6">
         {/* Results Section - appears first on mobile, second on desktop */}

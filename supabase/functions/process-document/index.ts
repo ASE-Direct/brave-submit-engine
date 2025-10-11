@@ -1129,11 +1129,49 @@ function detectColumnTypes(rows: Record<string, string>[], headers: string[]): {
   });
   
   // Fallback: use heuristics if no explicit match
+  // CRITICAL: Be very conservative to avoid misidentifying SKU/product code columns as prices
   if (!priceCol) {
+    console.log('🔍 Using heuristics to detect price column...');
     priceCol = headers.find(h => {
       const a = analysis[h];
-      return a.numeric > 0.7 && a.avgValue > 1 && a.avgValue < 1000 && (a.hasDecimals > 0.3 || a.hasDollarSign > 0);
+      const headerLower = h.toLowerCase().trim();
+      
+      // REJECT columns that look like SKUs, codes, or IDs from being used AS PRICE COLUMNS
+      // These columns are still valuable for product matching - just not as prices!
+      if (/\b(sku|code|id|number|part|item|product.*code|wholesaler|oem|depot|staples)\b/i.test(headerLower)) {
+        console.log(`   ✗ Rejected "${h}" as PRICE column - contains SKU/code keywords (column still used for matching)`);
+        return false;
+      }
+      
+      // Price columns should:
+      // 1. Be mostly numeric (>70%)
+      // 2. Have reasonable average values ($1-$1000)
+      // 3. Have decimals (>50%) OR dollar signs (>30%) - prices are rarely whole numbers
+      // 4. NOT be too large (avg < 10000 to exclude product codes)
+      const isCandidate = a.numeric > 0.7 && 
+             a.avgValue >= 1 && 
+             a.avgValue < 10000 && 
+             a.avgValue < 1000 && // Prefer values under $1000
+             (a.hasDecimals > 0.5 || a.hasDollarSign > 0.3);
+      
+      if (isCandidate) {
+        console.log(`   ✓ Candidate "${h}" - avg: $${a.avgValue.toFixed(2)}, decimals: ${(a.hasDecimals*100).toFixed(0)}%`);
+      }
+      
+      return isCandidate;
     });
+    
+    if (!priceCol) {
+      console.log('   ⊘ No valid price column found');
+    }
+  }
+  
+  // SAFETY CHECK: If detected price column has suspiciously high average, reject it
+  if (priceCol && analysis[priceCol]) {
+    if (analysis[priceCol].avgValue > 1000) {
+      console.log(`⚠️ FINAL REJECTION: price column "${priceCol}" - average value $${analysis[priceCol].avgValue.toFixed(2)} exceeds $1000 - likely not a price column`);
+      priceCol = undefined;
+    }
   }
   
   // Detect quantity column: FIRST try explicit name match, THEN use heuristics
@@ -1249,6 +1287,13 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   // Try to find price column by explicit name
   priceCol = headers.find(h => {
     const lower = h.toLowerCase().trim();
+    
+    // CRITICAL: Don't use SKU/code/ID columns AS PRICE columns (they're valuable for matching though!)
+    // These columns often contain numeric values that look like prices but aren't
+    if (/\b(sku|code|id|number|part|item|product.*code|wholesaler|oem|depot|staples)\b/i.test(lower)) {
+      return false;
+    }
+    
     // Exact matches (case-insensitive)
     if (lower === 'sale' || lower === 'price' || lower === 'unit price' || lower === 'unit cost') return true;
     // Support various price column formats
@@ -1259,7 +1304,16 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   
   // Use intelligent column detection as FALLBACK (only if explicit matching failed)
   if (detectedCols && (!qtyCol || !priceCol || !productNameCol)) {
-    if (!priceCol) priceCol = detectedCols.priceCol;
+    if (!priceCol && detectedCols.priceCol) {
+      // CRITICAL VALIDATION: Double-check that detected price column doesn't look like a SKU/code column
+      // SKU/code columns are valuable for matching, but shouldn't be used as price columns
+      const detectedPriceColLower = detectedCols.priceCol.toLowerCase();
+      if (/\b(sku|code|id|number|part|item|product.*code|wholesaler|oem|depot|staples)\b/i.test(detectedPriceColLower)) {
+        console.log(`⚠️ REJECTED "${detectedCols.priceCol}" as PRICE column - contains SKU/code keywords (will still use for product matching)`);
+      } else {
+        priceCol = detectedCols.priceCol;
+      }
+    }
     if (!qtyCol) qtyCol = detectedCols.qtyCol;
     if (!productNameCol) productNameCol = detectedCols.productNameCol;
     detectedCols.skuCols.forEach((col, idx) => {
@@ -1287,8 +1341,13 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
     
     const priceIdx = values.findIndex((v, i) => {
       if (i === qtyIdx) return false;
+      if (i === skuIdx) return false; // Don't use SKU column as price
       const s = String(v || '').trim();
-      return /\$|\./.test(s) || (parseFloat(s.replace(/[^0-9.]/g, '')) > 10);
+      const num = parseFloat(s.replace(/[^0-9.]/g, ''));
+      // Price should have $ sign OR decimal point, AND be reasonable ($5-$1000)
+      // Reject values that look like SKUs/codes (too large, no decimals)
+      if (num > 1000) return false; // Too large, likely a product code
+      return (/\$/.test(s) || /\./.test(s)) && num >= 5 && num <= 1000;
     });
     
     if (skuIdx >= 0) skuColumnMap['primary'] = headers[skuIdx];
@@ -1520,6 +1579,15 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
   
   let quantity = parseInt(quantityStr) || 1;
   let unitPrice = parseFloat(priceStr) || 0;
+  
+  // CRITICAL VALIDATION: Reject obviously invalid prices
+  // Toner/ink cartridges realistically range from $5 to $1,000 per unit
+  // Even high-end enterprise toners rarely exceed $500
+  // Anything over $1,000 is almost certainly a misidentified column (SKU, product code, etc.)
+  if (unitPrice > 1000) {
+    console.warn(`   Row ${rowNumber}: ⚠️ Rejected invalid price $${unitPrice.toFixed(2)} (exceeds $1,000 - likely misidentified column) - setting to $0`);
+    unitPrice = 0; // Reset to 0 if price is unrealistic
+  }
   
   // Data quality assessment
   const hasPrice = unitPrice > 0;
@@ -2557,25 +2625,17 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
         ? matchedProduct.unit_price
         : matchedProduct.cost || 0;
     
-    // FALLBACK PRICING LOGIC:
-    // 1. Use user's price from their file (if provided)
-    // 2. Fall back to catalog's list_price (partner list price)
-    // 3. Fall back to ASE price * 1.35 (assume ~35% markup as typical retail)
-    let effectiveUserPrice = item.unit_price && item.unit_price > 0 
-      ? item.unit_price 
-      : matchedProduct.list_price && matchedProduct.list_price > 0
-        ? matchedProduct.list_price
-        : asePrice * 1.35;
-    
-    const priceSource = item.unit_price > 0 
-      ? 'user_file' 
-      : matchedProduct.list_price > 0 
-        ? 'partner_list_price'
-        : 'estimated';
+    // PRICING VALIDATION:
+    // We need REAL pricing data to calculate meaningful savings
+    // Only accept: user's price from file OR catalog's list_price
+    // DO NOT use estimated prices - they create fake savings
+    const hasUserPrice = item.unit_price && item.unit_price > 0;
+    const hasListPrice = matchedProduct.list_price && matchedProduct.list_price > 0;
+    const hasRealPricing = hasUserPrice || hasListPrice;
     
     // If no ASE price at all, we can't calculate any savings
     if (!hasAsePrice) {
-      const currentCost = effectiveUserPrice * item.quantity;
+      const currentCost = (item.unit_price || 0) * item.quantity;
       totalCurrentCost += currentCost;
       totalOptimizedCost += currentCost;
       
@@ -2588,6 +2648,27 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
       console.log(`  ⊘ Skipped (no ASE price): ${item.raw_product_name}`);
       continue;
     }
+    
+    // CRITICAL: If no real pricing data, we CANNOT calculate savings
+    // Don't create fake savings with estimated prices!
+    if (!hasRealPricing) {
+      // Still count as analyzed, but with zero savings
+      breakdown.push({
+        ...item,
+        matched_product: matchedProduct,
+        savings: 0,
+        recommendation: 'Pricing information needed to calculate savings',
+        ase_price_available: asePrice,
+        message: `We found a match for this product! ASE price: $${asePrice.toFixed(2)}/unit. Upload a document with pricing to see potential savings.`
+      });
+      itemsSkipped++;
+      console.log(`  ⊘ Skipped (no user pricing data): ${item.raw_product_name} - matched but cannot calculate savings without current price`);
+      continue;
+    }
+    
+    // Use real pricing data for calculations
+    const effectiveUserPrice = hasUserPrice ? item.unit_price : matchedProduct.list_price;
+    const priceSource = hasUserPrice ? 'user_file' : 'partner_list_price';
 
     // We have enough data - analyze this item
     itemsAnalyzed++;
