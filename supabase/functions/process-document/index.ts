@@ -515,16 +515,16 @@ async function processDocument(context: ProcessingContext) {
 
     console.log(`📊 Retrieved ${allMatchedItems.length} items from database for savings calculation`);
 
-    // Step 3: Calculate savings (60-80%)
+    // Step 3: Calculate savings (60-78%)
     await updateProgress(context.jobId, 65, 'Analyzing savings opportunities...');
     const savingsAnalysis = await calculateSavings(allMatchedItems, context.jobId);
     
-    await updateProgress(context.jobId, 80, 'Generating report...');
+    await updateProgress(context.jobId, 78, 'Preparing report data...');
 
-    // Step 4: Generate PDF report (80-95%)
+    // Step 4: Generate PDF report (78-93%)
     const reportUrl = await generateReport(savingsAnalysis, context);
     
-    await updateProgress(context.jobId, 95, 'Saving results...');
+    await updateProgress(context.jobId, 93, 'Finalizing report...');
 
     // Step 5: Save final results (95-100%)
     await saveFinalReport(savingsAnalysis, context, reportUrl);
@@ -588,8 +588,8 @@ async function processChunk(
     }
   }
   
-  // Match products in this chunk
-  const matchedChunk = await matchProducts(chunk, context.jobId, startIdx);
+  // Match products in this chunk (pass context for granular progress updates)
+  const matchedChunk = await matchProducts(chunk, context.jobId, startIdx, context);
   
   // ENHANCEMENT: Validate matching quality
   const matchingValidation = validateMatching(matchedChunk);
@@ -1657,7 +1657,7 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
 /**
  * Match products to master catalog - OPTIMIZED FOR CHUNKED PROCESSING
  */
-async function matchProducts(items: any[], jobId: string, startOffset = 0) {
+async function matchProducts(items: any[], jobId: string, startOffset = 0, context?: ProcessingContext) {
   console.log(`🔍 Matching ${items.length} products (offset ${startOffset})...`);
   const BATCH_SIZE = 25; // Conservative batch size (25 concurrent operations for safety)
   const matched: any[] = [];
@@ -1694,6 +1694,17 @@ async function matchProducts(items: any[], jobId: string, startOffset = 0) {
     await saveBatchItems(batchResults, jobId);
     
     console.log(`  ✓ Saved batch ${Math.floor(batchStart/BATCH_SIZE) + 1}`);
+    
+    // GRANULAR PROGRESS: Update progress for each batch within chunk
+    if (context && context.totalItems) {
+      const itemsProcessedSoFar = startOffset + batchEnd;
+      const overallProgress = 15 + Math.floor((itemsProcessedSoFar / context.totalItems) * 45); // 15-60% for matching
+      await updateProgress(
+        jobId,
+        overallProgress,
+        `Matching products: ${itemsProcessedSoFar}/${context.totalItems} analyzed...`
+      );
+    }
   }
 
   const matchedCount = matched.filter(m => m.matched_product).length;
@@ -2589,8 +2600,24 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
   let co2Reduced = 0;
 
   const breakdown: any[] = [];
+  
+  // For granular progress updates
+  const totalItems = matchedItems.length;
+  let itemsProcessed = 0;
+  const UPDATE_INTERVAL = Math.max(10, Math.floor(totalItems / 10)); // Update every ~10% or at least every 10 items
 
   for (const item of matchedItems) {
+    itemsProcessed++;
+    
+    // GRANULAR PROGRESS: Update progress periodically during savings calculation
+    if (itemsProcessed % UPDATE_INTERVAL === 0 || itemsProcessed === totalItems) {
+      const savingsProgress = 65 + Math.floor((itemsProcessed / totalItems) * 13); // 65-78% for savings calc
+      await updateProgress(
+        jobId,
+        savingsProgress,
+        `Analyzing savings: ${itemsProcessed}/${totalItems} products evaluated...`
+      );
+    }
     // Skip if no match found, but STILL count current cost in baseline
     if (!item.matched_product) {
       // Include user's current spend in total, even if we can't offer savings
@@ -2892,6 +2919,9 @@ async function generateReport(savingsAnalysis: any, context: ProcessingContext):
   console.log('📄 Generating PDF report...');
   
   try {
+    // GRANULAR PROGRESS: Starting report preparation
+    await updateProgress(context.jobId, 80, 'Preparing report data...');
+    
     // Prepare report data with thorough null checking
     const reportData = {
       customer: {
@@ -2947,8 +2977,14 @@ async function generateReport(savingsAnalysis: any, context: ProcessingContext):
 
     console.log(`📄 Generating PDF with ${reportData.breakdown.length} items...`);
 
+    // GRANULAR PROGRESS: Generating PDF document
+    await updateProgress(context.jobId, 85, 'Generating PDF document...');
+    
     // Generate PDF
     const pdfBytes = await generatePDFReport(reportData);
+    
+    // GRANULAR PROGRESS: Uploading report
+    await updateProgress(context.jobId, 90, 'Uploading report...');
     
     // Upload to Supabase Storage - use same folder as CSV
     const fileName = `report.pdf`;

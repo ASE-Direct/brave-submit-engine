@@ -41,13 +41,13 @@ export function ProcessingAnimation({ submissionId, onComplete }: ProcessingAnim
     setShuffledFacts(shuffled);
   }, [submissionId]);
 
-  // Rotate facts every 3.5 seconds
+  // Rotate facts every 4.5 seconds
   useEffect(() => {
     if (shuffledFacts.length === 0) return;
     
     const factInterval = setInterval(() => {
       setCurrentFactIndex((prevIndex) => (prevIndex + 1) % shuffledFacts.length);
-    }, 3500);
+    }, 4500);
 
     return () => clearInterval(factInterval);
   }, [shuffledFacts]);
@@ -141,7 +141,7 @@ export function ProcessingAnimation({ submissionId, onComplete }: ProcessingAnim
             <h3 className="text-sm font-semibold text-primary uppercase tracking-wide">
               Did You Know?
             </h3>
-            <div className="min-h-[4rem] flex items-center justify-center px-4">
+            <div className="h-24 flex items-center justify-center px-4">
               <p 
                 key={currentFactIndex}
                 className="text-sm sm:text-base text-muted-foreground leading-relaxed animate-fade-in"
