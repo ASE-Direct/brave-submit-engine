@@ -982,34 +982,72 @@ function findDataHeaderFromRows(rows: any[][]): { headers: string[]; headerIndex
 
 /**
  * Intelligently find the actual data header row (skips metadata/blank rows) - CSV version
+ * UPDATED: Now matches Excel header detection logic exactly for consistency
  */
 function findDataHeader(lines: string[]): { headerRow: string; headerIndex: number } {
+  console.log(`🔍 CSV Header detection: analyzing ${Math.min(lines.length, 20)} rows...`);
+  
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const line = lines[i];
-    if (!line.trim()) continue;
+    if (!line.trim()) {
+      console.log(`   Row ${i + 1}: empty, skipping`);
+      continue;
+    }
     
     const lowerLine = line.toLowerCase();
     
-    // Look for common column headers that indicate actual data
-    const dataIndicators = [
-      'sku', 'oem', 'item', 'product', 'description', 
+    // CRITICAL FIX: Check if this is a HEADER ROW first (before checking metadata)
+    // Header rows have multiple column-like terms
+    const productIndicators = [
+      'sku', 'oem', 'item', 'product', 'description',
       'quantity', 'qty', 'price', 'cost', 'amount',
-      'part', 'number', 'model', 'uom'
+      'part', 'number', 'uom', 'staples', 'depot', 'sale'
     ];
     
-    const hasMultipleIndicators = dataIndicators.filter(indicator => 
+    // Count how many indicators are in this line
+    const matchCount = productIndicators.filter(indicator => 
       lowerLine.includes(indicator)
-    ).length >= 3;
+    ).length;
     
-    if (hasMultipleIndicators) {
-      console.log(`✓ Found data header at row ${i + 1}`);
+    // Parse the line to count columns (simple split for now, will be parsed properly later)
+    const tempCols = line.split(',');
+    const nonEmptyCount = tempCols.filter(c => c.trim().length > 0).length;
+    
+    // IMPROVED: If row has 2+ product indicators (matching Excel logic), it's likely a HEADER ROW
+    // Relaxed criteria: 2+ keywords OR 5+ non-empty columns with at least 1 keyword
+    const isLikelyHeader = (matchCount >= 2) || (matchCount >= 1 && nonEmptyCount >= 5);
+    
+    if (isLikelyHeader) {
+      console.log(`   Row ${i + 1}: ${matchCount} header keywords, ${nonEmptyCount} non-empty columns`);
+      console.log(`✓ Found data header at row ${i + 1} (${matchCount} keywords, ${nonEmptyCount} columns)`);
       return { headerRow: line, headerIndex: i };
     }
+    
+    // Skip metadata rows (report headers, customer info, etc.) - but ONLY if not a header row
+    const metadataIndicators = [
+      'report comments', 'report run date', 'report date range', 
+      'customer number', 'detail for all shipped'
+    ];
+    
+    const isMetadataRow = metadataIndicators.some(indicator => lowerLine.includes(indicator));
+    if (isMetadataRow) {
+      console.log(`   Row ${i + 1}: SKIPPED (metadata row)`);
+      continue; // Skip this row and continue searching
+    }
+    
+    console.log(`   Row ${i + 1}: ${matchCount} header keywords, ${nonEmptyCount} non-empty columns`);
   }
   
-  // Fallback to first non-empty line
-  console.log('⚠️ Using first line as header (no clear header found)');
-  return { headerRow: lines[0], headerIndex: 0 };
+  // Fallback: No headers found - use first non-empty line
+  console.log('⚠️ No header keywords found - using first non-empty line as header');
+  const firstNonEmpty = lines.find(line => line.trim().length > 0);
+  if (firstNonEmpty) {
+    return { headerRow: firstNonEmpty, headerIndex: lines.indexOf(firstNonEmpty) };
+  }
+  
+  // Last resort
+  console.log('⚠️ Last resort - using first line');
+  return { headerRow: lines[0] || '', headerIndex: 0 };
 }
 
 /**

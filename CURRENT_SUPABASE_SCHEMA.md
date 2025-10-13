@@ -1,10 +1,17 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 10, 2025 (Comprehensive Extraction & ILIKE Search Fix)
+**Last Updated:** October 13, 2025 (CSV/Excel Processing Parity Fix)
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
+- ✅ **CSV/EXCEL PARITY FIX (Oct 13, 2025):** Unified header detection for identical processing
+  - ✅ CSV header detection now matches Excel logic exactly (2+ keywords instead of 3+)
+  - ✅ Added metadata row detection to CSV processing (skips report headers)
+  - ✅ Improved CSV fallback logic for files without clear headers
+  - ✅ Enhanced logging for CSV header detection (matches Excel verbosity)
+  - ✅ Result: CSV and Excel files now process identically with same matching and calculations
+  - ✅ Guarantees: Same header detection, same column mapping, same SKU matching, same savings
 - ✅ **COMPREHENSIVE EXTRACTION FIX (Oct 10, 2025 - Late Evening):** 100% item extraction accuracy
   - ✅ System now scans ALL cells in each row, not just detected columns
   - ✅ Finds product descriptions even when DESCRIPTION column header is missing/unclear
