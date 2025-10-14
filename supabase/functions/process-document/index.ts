@@ -523,26 +523,16 @@ async function processDocument(context: ProcessingContext) {
     // If total savings is $0, this means either:
     // 1. No items could be matched to our catalog (wrong document type), OR
     // 2. All matched items are already at or below our prices (no opportunity)
-    // In both cases, we should fail with a helpful message
+    // In both cases, we should fail with the same message as document validation
     if (savingsAnalysis.summary.total_cost_savings === 0) {
       console.log('⚠️  VALIDATION FAILED: No savings opportunities found');
       console.log(`   Matched items: ${savingsAnalysis.summary.items_with_savings}`);
       console.log(`   Total items: ${savingsAnalysis.summary.total_items}`);
       
-      if (savingsAnalysis.summary.items_with_savings === 0) {
-        // Case 1: No items matched at all (likely wrong document)
-        throw new Error(
-          'Unable to process document: No matching products found in our catalog. ' +
-          'Please ensure you are uploading an order document with valid product names, SKUs, or part numbers that match our product catalog. ' +
-          'The document must contain exact product identifiers (SKU, OEM number, or exact product name) to generate a savings analysis.'
-        );
-      } else {
-        // Case 2: Items matched but no savings (already competitive pricing)
-        throw new Error(
-          'No savings opportunities found: All matched products are already at or below our competitive pricing. ' +
-          'While we successfully matched your products, we cannot offer additional savings on these items at this time.'
-        );
-      }
+      // Use the same error message as document validation for consistency
+      throw new Error(
+        `We're unable to calculate savings because your document is missing required information. Please upload a buy sheet, order invoice, quote, or item usage report that includes Item Name/SKU and Quantity for each product.`
+      );
     }
     
     await updateProgress(context.jobId, 78, 'Preparing report data...');

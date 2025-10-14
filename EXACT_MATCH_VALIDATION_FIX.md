@@ -87,28 +87,23 @@ In addition to strict matching validation, the system now validates the final re
 
 ### If Total Savings = $0
 
-The system will **fail the processing** and display one of these messages:
+The system will **fail the processing** and display this message:
 
-**Case 1: No Items Matched (0 matched items)**
 ```
-Unable to process document: No matching products found in our catalog. 
-Please ensure you are uploading an order document with valid product names, 
-SKUs, or part numbers that match our product catalog. The document must 
-contain exact product identifiers (SKU, OEM number, or exact product name) 
-to generate a savings analysis.
+We're unable to calculate savings because your document is missing required 
+information. Please upload a buy sheet, order invoice, quote, or item usage 
+report that includes Item Name/SKU and Quantity for each product.
 ```
 
-**Case 2: Items Matched but No Savings**
-```
-No savings opportunities found: All matched products are already at or 
-below our competitive pricing. While we successfully matched your products, 
-we cannot offer additional savings on these items at this time.
-```
+This single message covers both scenarios:
+- **No items matched** (unrelated document or missing identifiers)
+- **Items matched but no savings** (already competitive pricing)
 
 This prevents:
 - Empty reports with $0 savings from being generated
 - Confusion when unrelated documents are uploaded
 - Wasted time reviewing reports with no value
+- Users from seeing different messages for similar validation failures
 
 ## Deployment
 This fix is in the Edge Function and will take effect immediately upon deployment:
