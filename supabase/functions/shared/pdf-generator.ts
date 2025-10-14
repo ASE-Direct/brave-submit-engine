@@ -196,7 +196,7 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   yPos += 20;
 
   // Environmental Impact Box - with green styling
-  yPos += 5;
+  yPos += 5; // Spacing between Executive Summary and Environmental Impact
   doc.setFillColor(240, 253, 244); // Light green background
   doc.setDrawColor(34, 197, 94); // Green border
   doc.setLineWidth(0.5);
@@ -215,82 +215,112 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   const envCol1 = margin + 5;
   const envCol2 = margin + contentWidth / 3;
   const envCol3 = margin + (contentWidth * 2 / 3);
+  const envColWidth = contentWidth / 3;
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
   
   // Cartridges Saved
-  doc.text('Cartridges Saved', envCol1, yPos);
+  const cartridgesSavedLabel = 'Cartridges Saved';
+  const cartridgesSavedLabelWidth = doc.getTextWidth(cartridgesSavedLabel);
+  doc.text(cartridgesSavedLabel, envCol1 + (envColWidth - cartridgesSavedLabelWidth) / 2, yPos);
+  
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94); // Green
-  doc.text(`${data.summary.environmental.cartridges_saved}`, envCol1, yPos + 7);
+  const cartridgesSavedValue = `${data.summary.environmental.cartridges_saved}`;
+  const cartridgesSavedValueWidth = doc.getTextWidth(cartridgesSavedValue);
+  doc.text(cartridgesSavedValue, envCol1 + (envColWidth - cartridgesSavedValueWidth) / 2, yPos + 7);
   
   // CO2 Reduced
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
-  doc.text('CO₂ Reduced (lbs)', envCol2, yPos);
+  const co2Label = 'CO₂ Reduced (lbs)';
+  const co2LabelWidth = doc.getTextWidth(co2Label);
+  doc.text(co2Label, envCol2 + (envColWidth - co2LabelWidth) / 2, yPos);
+  
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94); // Green
-  doc.text(`${data.summary.environmental.co2_reduced_pounds.toFixed(0)}`, envCol2, yPos + 7);
+  const co2Value = `${data.summary.environmental.co2_reduced_pounds.toFixed(0)}`;
+  const co2ValueWidth = doc.getTextWidth(co2Value);
+  doc.text(co2Value, envCol2 + (envColWidth - co2ValueWidth) / 2, yPos + 7);
   
   // Trees Saved
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
-  doc.text('Trees Equivalent', envCol3, yPos);
+  const treesLabel = 'Trees Equivalent';
+  const treesLabelWidth = doc.getTextWidth(treesLabel);
+  doc.text(treesLabel, envCol3 + (envColWidth - treesLabelWidth) / 2, yPos);
+  
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94); // Green
-  doc.text(`${data.summary.environmental.trees_saved.toFixed(2)}`, envCol3, yPos + 7);
+  const treesValue = `${data.summary.environmental.trees_saved.toFixed(2)}`;
+  const treesValueWidth = doc.getTextWidth(treesValue);
+  doc.text(treesValue, envCol3 + (envColWidth - treesValueWidth) / 2, yPos + 7);
 
   yPos += 18;
 
   // Environmental metrics - Row 2: 2 columns
   const envCol1Row2 = margin + 5;
   const envCol2Row2 = margin + contentWidth / 2;
+  const envColWidthRow2 = contentWidth / 2;
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
   
   // Plastic Reduced
-  doc.text('Plastic Reduced (lbs)', envCol1Row2, yPos);
+  const plasticLabel = 'Plastic Reduced (lbs)';
+  const plasticLabelWidth = doc.getTextWidth(plasticLabel);
+  doc.text(plasticLabel, envCol1Row2 + (envColWidthRow2 - plasticLabelWidth) / 2, yPos);
+  
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94); // Green
-  doc.text(`${data.summary.environmental.plastic_reduced_pounds.toFixed(0)}`, envCol1Row2, yPos + 7);
+  const plasticValue = `${data.summary.environmental.plastic_reduced_pounds.toFixed(0)}`;
+  const plasticValueWidth = doc.getTextWidth(plasticValue);
+  doc.text(plasticValue, envCol1Row2 + (envColWidthRow2 - plasticValueWidth) / 2, yPos + 7);
   
   // Shipping Weight Saved
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
-  doc.text('Shipping Weight Saved (lbs)', envCol2Row2, yPos);
+  const shippingLabel = 'Shipping Weight Saved (lbs)';
+  const shippingLabelWidth = doc.getTextWidth(shippingLabel);
+  doc.text(shippingLabel, envCol2Row2 + (envColWidthRow2 - shippingLabelWidth) / 2, yPos);
+  
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94); // Green
-  doc.text(`${data.summary.environmental.shipping_weight_saved_pounds.toFixed(1)}`, envCol2Row2, yPos + 7);
+  const shippingValue = `${data.summary.environmental.shipping_weight_saved_pounds.toFixed(1)}`;
+  const shippingValueWidth = doc.getTextWidth(shippingValue);
+  doc.text(shippingValue, envCol2Row2 + (envColWidthRow2 - shippingValueWidth) / 2, yPos + 7);
 
   yPos += 20;
 
   // Key Quality Benefits Section - with modern styling
-  yPos += 5;
+  yPos += 5; // Spacing between Environmental Impact and Key Quality Benefits
+  
+  const benefitsBoxStartY = yPos; // Store box start position
+  
   doc.setFillColor(255, 255, 255);
   doc.setDrawColor(42, 41, 99); // Navy
   doc.setLineWidth(0.5);
-  doc.roundedRect(margin, yPos, contentWidth, 60, 3, 3, 'D');
+  doc.roundedRect(margin, yPos, contentWidth, 56, 3, 3, 'D'); // Fixed height for proper spacing
   
-  yPos += 6;
+  yPos += 7; // Top padding inside the box
   
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
   doc.text('Key Quality Benefits', margin + 5, yPos);
   
-  yPos += 6;
+  yPos += 7; // Spacing after title
 
   // Benefits list with bullet points
   doc.setFontSize(8.5);
@@ -315,10 +345,11 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
       doc.text(line, margin + 9, yPos);
       if (idx < benefitLines.length - 1) yPos += 3.5;
     });
-    yPos += 4;
+    yPos += 4; // Spacing between benefits
   });
 
-  yPos += 5;
+  // Move yPos to the end of the box (independent of text content)
+  yPos = benefitsBoxStartY + 56 + 10; // Box height + spacing after box
 
   // ===== PAGE 2+: DETAILED BREAKDOWN =====
   
