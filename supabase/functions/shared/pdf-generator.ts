@@ -534,11 +534,11 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.setFontSize(11);
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'normal');
-  doc.text('Email: sales@bav.com', pageWidth / 2, yPos, { align: 'center' });
+  doc.text('Email: sales@asedirect.com', pageWidth / 2, yPos, { align: 'center' });
   yPos += 7;
-  doc.text('Phone: 1-800-BAV-SAVE', pageWidth / 2, yPos, { align: 'center' });
+  doc.text('Phone: 888-204-1938', pageWidth / 2, yPos, { align: 'center' });
   yPos += 7;
-  doc.text('Web: www.betteramericanvalue.com', pageWidth / 2, yPos, { align: 'center' });
+  doc.text('Web: www.asedirect.com', pageWidth / 2, yPos, { align: 'center' });
 
   // Footer on all pages
   const totalPages = doc.getNumberOfPages();
