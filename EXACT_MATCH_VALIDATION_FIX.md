@@ -81,6 +81,35 @@ To test the fix:
 2. System should return 0 matched items (or very few if there are coincidental exact matches)
 3. No savings should be calculated for unmatched items
 
+## Zero Savings Validation
+
+In addition to strict matching validation, the system now validates the final results:
+
+### If Total Savings = $0
+
+The system will **fail the processing** and display one of these messages:
+
+**Case 1: No Items Matched (0 matched items)**
+```
+Unable to process document: No matching products found in our catalog. 
+Please ensure you are uploading an order document with valid product names, 
+SKUs, or part numbers that match our product catalog. The document must 
+contain exact product identifiers (SKU, OEM number, or exact product name) 
+to generate a savings analysis.
+```
+
+**Case 2: Items Matched but No Savings**
+```
+No savings opportunities found: All matched products are already at or 
+below our competitive pricing. While we successfully matched your products, 
+we cannot offer additional savings on these items at this time.
+```
+
+This prevents:
+- Empty reports with $0 savings from being generated
+- Confusion when unrelated documents are uploaded
+- Wasted time reviewing reports with no value
+
 ## Deployment
 This fix is in the Edge Function and will take effect immediately upon deployment:
 ```bash
@@ -93,4 +122,6 @@ supabase functions deploy process-document
 - ✅ Maintains accuracy of savings reports
 - ✅ Protects against garbage data
 - ✅ Requires verifiable exact matches for all results
+- ✅ Blocks $0 savings reports with clear error messages
+- ✅ Provides helpful guidance for users who upload wrong documents
 

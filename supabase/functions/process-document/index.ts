@@ -519,6 +519,32 @@ async function processDocument(context: ProcessingContext) {
     await updateProgress(context.jobId, 65, 'Analyzing savings opportunities...');
     const savingsAnalysis = await calculateSavings(allMatchedItems, context.jobId);
     
+    // VALIDATION: Check if we have any savings
+    // If total savings is $0, this means either:
+    // 1. No items could be matched to our catalog (wrong document type), OR
+    // 2. All matched items are already at or below our prices (no opportunity)
+    // In both cases, we should fail with a helpful message
+    if (savingsAnalysis.summary.total_cost_savings === 0) {
+      console.log('⚠️  VALIDATION FAILED: No savings opportunities found');
+      console.log(`   Matched items: ${savingsAnalysis.summary.items_with_savings}`);
+      console.log(`   Total items: ${savingsAnalysis.summary.total_items}`);
+      
+      if (savingsAnalysis.summary.items_with_savings === 0) {
+        // Case 1: No items matched at all (likely wrong document)
+        throw new Error(
+          'Unable to process document: No matching products found in our catalog. ' +
+          'Please ensure you are uploading an order document with valid product names, SKUs, or part numbers that match our product catalog. ' +
+          'The document must contain exact product identifiers (SKU, OEM number, or exact product name) to generate a savings analysis.'
+        );
+      } else {
+        // Case 2: Items matched but no savings (already competitive pricing)
+        throw new Error(
+          'No savings opportunities found: All matched products are already at or below our competitive pricing. ' +
+          'While we successfully matched your products, we cannot offer additional savings on these items at this time.'
+        );
+      }
+    }
+    
     await updateProgress(context.jobId, 78, 'Preparing report data...');
 
     // Step 4: Generate PDF report (78-93%)
