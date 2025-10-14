@@ -144,11 +144,14 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.setLineWidth(0.5);
   doc.line(margin, yPos, pageWidth - margin, yPos);
   
-  yPos += 12;
+  yPos += 8;
 
   // Executive Summary Box - with modern rounded corners
+  const execSummaryBoxStart = yPos;
+  const execSummaryBoxHeight = 45;
+  
   doc.setFillColor(245, 245, 245); // Light gray
-  doc.roundedRect(margin, yPos, contentWidth, 45, 2, 2, 'F');
+  doc.roundedRect(margin, yPos, contentWidth, execSummaryBoxHeight, 2, 2, 'F');
   
   yPos += 8;
   
@@ -193,14 +196,17 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.setTextColor(darkGray);
   doc.text(`${data.summary.items_with_savings} with savings`, col2X, yPos + 14);
 
-  yPos += 20;
+  // Move to end of box + spacing
+  yPos = execSummaryBoxStart + execSummaryBoxHeight + 6;
 
   // Environmental Impact Box - with green styling
-  yPos += 5; // Spacing between Executive Summary and Environmental Impact
+  const envBoxStart = yPos;
+  const envBoxHeight = 52;
+  
   doc.setFillColor(240, 253, 244); // Light green background
   doc.setDrawColor(34, 197, 94); // Green border
   doc.setLineWidth(0.5);
-  doc.roundedRect(margin, yPos, contentWidth, 52, 3, 3, 'FD'); // Rounded corners with fill and draw
+  doc.roundedRect(margin, yPos, contentWidth, envBoxHeight, 3, 3, 'FD'); // Rounded corners with fill and draw
   
   yPos += 8;
   
@@ -301,11 +307,10 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   const shippingValueWidth = doc.getTextWidth(shippingValue);
   doc.text(shippingValue, envCol2Row2 + (envColWidthRow2 - shippingValueWidth) / 2, yPos + 7);
 
-  yPos += 20;
+  // Move to end of box + spacing
+  yPos = envBoxStart + envBoxHeight + 6;
 
   // Key Quality Benefits Section - with modern styling
-  yPos += 5; // Spacing between Environmental Impact and Key Quality Benefits
-  
   const benefitsBoxStartY = yPos; // Store box start position
   
   doc.setFillColor(255, 255, 255);
@@ -445,7 +450,11 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(darkGray);
         
-        const recName = doc.splitTextToSize(item.recommended_product.name, contentWidth - 10);
+        // Add "Remanufactured" tag if unit_price > 0
+        const recNameWithTag = item.recommended_product.unit_price > 0 
+          ? `${item.recommended_product.name} [Remanufactured]`
+          : item.recommended_product.name;
+        const recName = doc.splitTextToSize(recNameWithTag, contentWidth - 10);
         doc.text(recName[0], margin + 3, yPos + 5);
         
         // Show wholesaler SKU if available

@@ -8,6 +8,12 @@ This document reflects the current state of all tables, functions, and policies 
 - ✅ **ENHANCED ENVIRONMENTAL IMPACT (Oct 14, 2025):** Expanded environmental metrics with accurate calculations
   - ✅ Updated plastic reduced calculation: 2 lbs per cartridge (previously 0.5 lbs)
   - ✅ Added shipping weight savings tracking: 2.5 lbs per toner, 0.2 lbs per ink
+  - ✅ **NEW: Remanufactured/Reused Cartridge Tracking** - Items with `unit_price > 0` now count as cartridge savings
+    - Recognizes that offering remanufactured/reused cartridges prevents waste
+    - Counts full item quantity as cartridges saved (not just higher-yield savings)
+    - Applies environmental impact calculations even when no cost savings exist
+    - PDF reports display "[Remanufactured]" tag on recommended product names with unit_price > 0
+    - Total impact = Higher-Yield Savings + Remanufactured/Reused Savings
   - ✅ Enhanced PDF reports to display plastic reduced and shipping weight saved
   - ✅ New environmental metrics displayed in two rows: Row 1 (Cartridges, CO2, Trees), Row 2 (Plastic, Shipping Weight)
   - ✅ Updated savings_reports table with `shipping_weight_saved_pounds` field
@@ -365,11 +371,16 @@ Final reports with aggregated savings metrics.
 - `items_with_savings` (INTEGER) - Items with savings opportunities
 
 **Environmental Impact:**
-- `cartridges_saved` (INTEGER) - Fewer cartridges needed
+- `cartridges_saved` (INTEGER) - Cartridges saved from waste (includes both higher-yield savings AND remanufactured/reused cartridges)
 - `co2_reduced_pounds` (DECIMAL) - CO2 reduction in pounds
 - `trees_saved` (DECIMAL) - Equivalent trees
 - `plastic_reduced_pounds` (DECIMAL) - Plastic waste reduced (2 lbs per cartridge)
 - `shipping_weight_saved_pounds` (DECIMAL) - Shipping weight saved (2.5 lbs per toner, 0.2 lbs per ink)
+
+**Cartridge Savings Calculation:**
+1. **Higher-Yield Savings:** When recommending larger cartridges (e.g., 5 standard → 3 XL), saves 2 cartridges
+2. **Remanufactured/Reused:** Items with `unit_price > 0` count full quantity as cartridges saved from waste
+3. **Total = Higher-Yield + Remanufactured:** Both sources contribute to total environmental impact
 
 **Report:**
 - `report_data` (JSONB) - Full detailed breakdown

@@ -3105,6 +3105,22 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
           console.log(`     💰 Using Basic Price Savings: $${basicTotalSavings.toFixed(2)} (${((basicTotalSavings/currentCost)*100).toFixed(1)}%) - BETTER than higher-yield $${higherYieldSavings.toFixed(2)}`);
         }
 
+        // Environmental impact for remanufactured/reused cartridges
+        // If item has unit_price > 0, count quantity as cartridge savings
+        if (effectiveUserPrice > 0 && item.quantity > 0) {
+          const cartridgesSavedHere = item.quantity;
+          cartridgesSaved += cartridgesSavedHere;
+          const isToner = matchedProduct.category === 'toner_cartridge';
+          const co2PerCartridge = isToner ? 5.2 : 2.5;
+          const shippingWeightPerCartridge = isToner ? 2.5 : 0.2;
+          
+          co2Reduced += cartridgesSavedHere * co2PerCartridge;
+          plasticReduced += cartridgesSavedHere * 2; // 2 lbs plastic per cartridge
+          shippingWeightSaved += cartridgesSavedHere * shippingWeightPerCartridge;
+          
+          console.log(`     ♻️  Remanufactured/Reused: ${cartridgesSavedHere} cartridge(s) saved from waste`);
+        }
+
         // Update database with basic savings
         const MAX_DECIMAL = 99999999.99;
         const capValue = (val: number) => Math.min(Math.max(val || 0, 0), MAX_DECIMAL);
@@ -3118,7 +3134,13 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             cost_savings: capValue(basicTotalSavings),
             cost_savings_percentage: Math.min(Math.max((basicTotalSavings / currentCost) * 100, 0), 100),
             savings_reason: `Save $${basicSavingsPerUnit.toFixed(2)}/unit by purchasing at ASE price`,
-            recommendation_type: 'better_price'
+            recommendation_type: 'better_price',
+            environmental_savings: {
+              cartridges_saved: Math.max(0, item.quantity),
+              co2_reduced: Math.max(0, item.quantity * (matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5)),
+              plastic_reduced: Math.max(0, item.quantity * 2),
+              shipping_weight_saved: Math.max(0, item.quantity * (matchedProduct.category === 'toner_cartridge' ? 2.5 : 0.2))
+            }
           })
           .eq('processing_job_id', jobId)
           .eq('raw_product_name', item.raw_product_name);
@@ -3148,6 +3170,22 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
 
         console.log(`     💰 Basic Price Savings: $${basicTotalSavings.toFixed(2)} (${((basicTotalSavings/currentCost)*100).toFixed(1)}%)`);
 
+        // Environmental impact for remanufactured/reused cartridges
+        // If item has unit_price > 0, count quantity as cartridge savings
+        if (effectiveUserPrice > 0 && item.quantity > 0) {
+          const cartridgesSavedHere = item.quantity;
+          cartridgesSaved += cartridgesSavedHere;
+          const isToner = matchedProduct.category === 'toner_cartridge';
+          const co2PerCartridge = isToner ? 5.2 : 2.5;
+          const shippingWeightPerCartridge = isToner ? 2.5 : 0.2;
+          
+          co2Reduced += cartridgesSavedHere * co2PerCartridge;
+          plasticReduced += cartridgesSavedHere * 2; // 2 lbs plastic per cartridge
+          shippingWeightSaved += cartridgesSavedHere * shippingWeightPerCartridge;
+          
+          console.log(`     ♻️  Remanufactured/Reused: ${cartridgesSavedHere} cartridge(s) saved from waste`);
+        }
+
         // Update database with basic savings
         const MAX_DECIMAL = 99999999.99;
         const capValue = (val: number) => Math.min(Math.max(val || 0, 0), MAX_DECIMAL);
@@ -3161,7 +3199,13 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             cost_savings: capValue(basicTotalSavings),
             cost_savings_percentage: Math.min(Math.max((basicTotalSavings / currentCost) * 100, 0), 100),
             savings_reason: `Save $${basicSavingsPerUnit.toFixed(2)}/unit by purchasing at ASE price`,
-            recommendation_type: 'better_price'
+            recommendation_type: 'better_price',
+            environmental_savings: {
+              cartridges_saved: Math.max(0, item.quantity),
+              co2_reduced: Math.max(0, item.quantity * (matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5)),
+              plastic_reduced: Math.max(0, item.quantity * 2),
+              shipping_weight_saved: Math.max(0, item.quantity * (matchedProduct.category === 'toner_cartridge' ? 2.5 : 0.2))
+            }
           })
           .eq('processing_job_id', jobId)
           .eq('raw_product_name', item.raw_product_name);
@@ -3184,6 +3228,37 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
       } else {
         // No savings at all (user already paying at or below ASE price)
         totalOptimizedCost += currentCost;
+        
+        // Environmental impact for remanufactured/reused cartridges
+        // Even without cost savings, if item has unit_price > 0, count quantity as cartridge savings
+        if (effectiveUserPrice > 0 && item.quantity > 0) {
+          const cartridgesSavedHere = item.quantity;
+          cartridgesSaved += cartridgesSavedHere;
+          const isToner = matchedProduct.category === 'toner_cartridge';
+          const co2PerCartridge = isToner ? 5.2 : 2.5;
+          const shippingWeightPerCartridge = isToner ? 2.5 : 0.2;
+          
+          co2Reduced += cartridgesSavedHere * co2PerCartridge;
+          plasticReduced += cartridgesSavedHere * 2; // 2 lbs plastic per cartridge
+          shippingWeightSaved += cartridgesSavedHere * shippingWeightPerCartridge;
+          
+          console.log(`     ♻️  Remanufactured/Reused: ${cartridgesSavedHere} cartridge(s) saved from waste`);
+          
+          // Update database with environmental savings only
+          await supabase
+            .from('order_items_extracted')
+            .update({
+              environmental_savings: {
+                cartridges_saved: Math.max(0, item.quantity),
+                co2_reduced: Math.max(0, item.quantity * co2PerCartridge),
+                plastic_reduced: Math.max(0, item.quantity * 2),
+                shipping_weight_saved: Math.max(0, item.quantity * shippingWeightPerCartridge)
+              }
+            })
+            .eq('processing_job_id', jobId)
+            .eq('raw_product_name', item.raw_product_name);
+        }
+        
         breakdown.push({
           ...item,
           unit_price: effectiveUserPrice, // Use effective price (fallback if original was 0)

@@ -95,6 +95,9 @@ environmental: {
 
 ### Complete Calculation Flow
 
+Environmental impact is calculated in **two scenarios**:
+
+#### Scenario 1: Higher-Yield Recommendations
 When a higher-yield recommendation is made:
 
 1. **Calculate Cartridges Saved**
@@ -123,8 +126,24 @@ When a higher-yield recommendation is made:
    ```
    *(Based on 1 tree absorbing ~48 lbs CO2/year)*
 
-### Example Calculation
+#### Scenario 2: Remanufactured/Reused Cartridges
+**NEW:** When items have `unit_price > 0`, they represent remanufactured or reused cartridges that save cartridges from waste:
 
+1. **Calculate Cartridges Saved**
+   ```
+   cartridges_saved = item_quantity
+   ```
+   
+2. **Calculate Environmental Impact**
+   - Same formulas as above apply
+   - Each remanufactured/reused cartridge prevents waste
+   - Applies even when there's no cost savings (already at/below ASE price)
+
+**Total Environmental Impact = Higher-Yield Savings + Remanufactured/Reused Savings**
+
+### Example Calculations
+
+#### Example 1: Higher-Yield Recommendation
 **Scenario:** User orders 5 standard HP 64 ink cartridges, system recommends 3 HP 64XL
 
 | Metric | Calculation | Result |
@@ -135,6 +154,26 @@ When a higher-yield recommendation is made:
 | Plastic Reduced | 2 × 2 lbs | 4.0 lbs |
 | Shipping Weight Saved | 2 × 0.2 lbs | 0.4 lbs |
 
+#### Example 2: Remanufactured/Reused Cartridges
+**Scenario:** User orders 10 HP 26A toner cartridges at ASE price (no cost savings, but remanufactured)
+
+| Metric | Calculation | Result |
+|--------|-------------|--------|
+| Cartridges Saved | 10 (quantity) | 10 cartridges |
+| CO2 Reduced | 10 × 5.2 lbs | 52.0 lbs |
+| Trees Saved | 52.0 / 48 | 1.08 trees |
+| Plastic Reduced | 10 × 2 lbs | 20.0 lbs |
+| Shipping Weight Saved | 10 × 2.5 lbs | 25.0 lbs |
+
+#### Example 3: Combined Savings
+**Scenario:** Order with both higher-yield recommendations and remanufactured cartridges
+
+| Item | Type | Qty | Environmental Impact |
+|------|------|-----|---------------------|
+| HP 64 (5 → 3 HP 64XL) | Higher-Yield | -2 | 2 cartridges saved |
+| HP 26A Reman | Remanufactured | 10 | 10 cartridges saved |
+| **Total** | | | **12 cartridges saved** |
+
 ## Files Modified
 
 1. ✅ `supabase/functions/process-document/index.ts`
@@ -142,11 +181,13 @@ When a higher-yield recommendation is made:
    - Updated environmental impact calculation logic
    - Enhanced individual item environmental_savings object
    - Updated summary return object
+   - Added remanufactured/reused cartridge environmental tracking for items with unit_price > 0
 
 2. ✅ `supabase/functions/shared/pdf-generator.ts`
    - Expanded Environmental Impact box (35 → 55 height)
    - Added Row 2 with Plastic Reduced and Shipping Weight Saved
    - Updated layout to 2-row design
+   - Added "[Remanufactured]" tag to recommended product names with unit_price > 0 for clear identification
 
 3. ✅ `CURRENT_SUPABASE_SCHEMA.md`
    - Added `shipping_weight_saved_pounds` to savings_reports table documentation
