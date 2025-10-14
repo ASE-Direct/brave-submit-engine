@@ -1,10 +1,25 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 13, 2025 (CSV/Excel Processing Parity Fix)
+**Last Updated:** October 14, 2025 (Fallback Pricing Logic with Messaging)
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
+- ✅ **FALLBACK PRICING WITH MESSAGING (Oct 14, 2025):** Enhanced pricing strategy for items without explicit prices
+  - ✅ Implemented 4-tier cascading fallback: User Price → List Price → Unit Price × 1.30 → Cost × 1.30
+  - ✅ Items using assumed pricing now include clear message in report
+  - ✅ Messages inform users that pricing was estimated since document didn't include it
+  - ✅ Price source tracking: `user_file`, `catalog_list_price`, `estimated_from_unit_price`, `estimated_from_cost`
+  - ✅ Enhanced logging shows [ASSUMED] indicator when fallback pricing is applied
+  - ✅ Result: All matched items can be included in savings calculations with appropriate transparency
+- ✅ **PARTNER COST UPDATE (Oct 14, 2025):** Updated master_products.cost with actual partner pricing
+  - ✅ Updated 695 products with Partner Cost data from Staples catalog (Staples.To.Clover.9.26.25)
+  - ✅ Source: PARTNER COST column from master wholesale catalog
+  - ✅ Script: `scripts/update-partner-costs.ts`
+  - ✅ SKU matching: Removed "-R" suffix from catalog SKUs for database matching
+  - ✅ Impact: Accurate cost data for savings calculations and margin analysis
+  - ✅ Products not found (155): SKUs not in current database or marked as "N/A" in source
+  - ✅ Result: Cost column now reflects actual partner wholesale costs instead of estimates
 - ✅ **CSV/EXCEL PARITY FIX (Oct 13, 2025):** Unified header detection for identical processing
   - ✅ CSV header detection now matches Excel logic exactly (2+ keywords instead of 3+)
   - ✅ Added metadata row detection to CSV processing (skips report headers)
@@ -91,18 +106,26 @@ This document reflects the current state of all tables, functions, and policies 
 
 ## 💰 Pricing Logic
 
-When calculating savings, the system uses a **3-tier pricing fallback**:
+When calculating savings, the system uses a **4-tier cascading pricing fallback** with transparency messaging:
 
-1. **User's Price** (Primary): Price from the uploaded file's price column
-2. **Partner List Price** (Fallback): `master_products.list_price` - partner/retail pricing
-3. **Estimated Price** (Last Resort): `ase_unit_price × 1.35` (assumes ~35% markup)
+1. **User's Price** (Priority 1): Price from the uploaded file's price column
+2. **Catalog List Price** (Priority 2): `master_products.list_price` - partner/retail pricing
+3. **Estimated from Unit Price** (Priority 3): `master_products.unit_price × 1.30` (30% markup)
+4. **Estimated from Cost** (Priority 4): `master_products.cost × 1.30` (30% markup)
 
 **Price Source Tracking:**
-- `user_file`: Price extracted from user's document
-- `partner_list_price`: Using catalog's partner list price
-- `estimated`: Calculated estimate based on ASE pricing
+- `user_file`: Price extracted from user's document (no message - actual price)
+- `catalog_list_price`: Using catalog's partner list price (includes message)
+- `estimated_from_unit_price`: Calculated as unit_price × 1.30 (includes message)
+- `estimated_from_cost`: Calculated as cost × 1.30 (includes message)
 
-This ensures accurate savings calculations even when user files don't include pricing data (e.g., usage reports, inventory exports).
+**Transparency Messaging:**
+When fallback pricing (priorities 2-4) is used, the system automatically adds a message to the report item:
+- **List Price:** "Note: Assumed pricing based on catalog list price since document didn't include price information."
+- **Unit Price × 1.30:** "Note: Assumed pricing based on estimated market price (30% markup from wholesale) since document didn't include price information."
+- **Cost × 1.30:** "Note: Assumed pricing based on estimated market price (30% markup from cost) since document didn't include price information."
+
+This ensures accurate savings calculations even when user files don't include pricing data (e.g., usage reports, inventory exports), while maintaining full transparency about assumed pricing.
 
 ---
 

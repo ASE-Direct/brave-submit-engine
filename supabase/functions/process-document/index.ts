@@ -2543,13 +2543,10 @@ function validateMinimumDataRequirements(items: any[]): {
     const hasIdentifier = (item.raw_product_name && item.raw_product_name.length > 2) ||
                          (item.sku_fields?.all_skus?.length > 0);
     
-    // Has pricing data
-    const hasPrice = item.unit_price && item.unit_price > 0;
-    
     // Has quantity
     const hasQuantity = item.quantity && item.quantity > 0;
     
-    return hasIdentifier && hasPrice && hasQuantity;
+    return hasIdentifier && hasQuantity;
   }).length;
   
   const itemsMissingData = items.length - itemsWithCompleteData;
@@ -2576,7 +2573,7 @@ function validateMinimumDataRequirements(items: any[]): {
       missingQuantity
     },
     errorMessage: isValid ? undefined : 
-      `We're unable to calculate savings because your document is missing required information. Please upload a buy sheet, order invoice, quote, or item usage report that includes Item Name/SKU, Price, and Quantity for each product.`
+      `We're unable to calculate savings because your document is missing required information. Please upload a buy sheet, order invoice, quote, or item usage report that includes Item Name/SKU and Quantity for each product.`
   };
 }
 
@@ -2788,13 +2785,17 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
         ? matchedProduct.unit_price
         : matchedProduct.cost || 0;
     
-    // PRICING VALIDATION:
-    // We need REAL pricing data to calculate meaningful savings
-    // Only accept: user's price from file OR catalog's list_price
-    // DO NOT use estimated prices - they create fake savings
+    // PRICING VALIDATION WITH CASCADING FALLBACK:
+    // Priority 1: User's price from document (most accurate)
+    // Priority 2: Catalog list_price (partner/retail pricing)
+    // Priority 3: Estimated from unit_price * 1.30 (30% markup)
+    // Priority 4: Estimated from cost * 1.30 (30% markup)
+    // Last Resort: Skip if no pricing data available at all
+    
     const hasUserPrice = item.unit_price && item.unit_price > 0;
     const hasListPrice = matchedProduct.list_price && matchedProduct.list_price > 0;
-    const hasRealPricing = hasUserPrice || hasListPrice;
+    const hasCatalogUnitPrice = matchedProduct.unit_price && matchedProduct.unit_price > 0;
+    const hasCost = matchedProduct.cost && matchedProduct.cost > 0;
     
     // If no ASE price at all, we can't calculate any savings
     if (!hasAsePrice) {
@@ -2812,10 +2813,33 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
       continue;
     }
     
-    // CRITICAL: If no real pricing data, we CANNOT calculate savings
-    // Don't create fake savings with estimated prices!
-    if (!hasRealPricing) {
-      // Still count as analyzed, but with zero savings
+    // Cascading fallback pricing logic
+    let effectiveUserPrice: number;
+    let priceSource: string;
+    let assumedPricingMessage: string | undefined;
+    
+    if (hasUserPrice) {
+      // Priority 1: Use user-provided price from document
+      effectiveUserPrice = item.unit_price;
+      priceSource = 'user_file';
+      assumedPricingMessage = undefined; // No message needed - actual price provided
+    } else if (hasListPrice) {
+      // Priority 2: Use catalog list price
+      effectiveUserPrice = matchedProduct.list_price;
+      priceSource = 'catalog_list_price';
+      assumedPricingMessage = 'Note: Assumed pricing based on catalog list price since document didn\'t include price information.';
+    } else if (hasCatalogUnitPrice) {
+      // Priority 3: Estimate from unit_price with 30% markup
+      effectiveUserPrice = matchedProduct.unit_price * 1.30;
+      priceSource = 'estimated_from_unit_price';
+      assumedPricingMessage = 'Note: Assumed pricing based on estimated market price (30% markup from wholesale) since document didn\'t include price information.';
+    } else if (hasCost) {
+      // Priority 4: Estimate from cost with 30% markup
+      effectiveUserPrice = matchedProduct.cost * 1.30;
+      priceSource = 'estimated_from_cost';
+      assumedPricingMessage = 'Note: Assumed pricing based on estimated market price (30% markup from cost) since document didn\'t include price information.';
+    } else {
+      // Last Resort: No pricing data available at all - skip this item
       breakdown.push({
         ...item,
         matched_product: matchedProduct,
@@ -2825,13 +2849,9 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
         message: `We found a match for this product! ASE price: $${asePrice.toFixed(2)}/unit. Upload a document with pricing to see potential savings.`
       });
       itemsSkipped++;
-      console.log(`  ⊘ Skipped (no user pricing data): ${item.raw_product_name} - matched but cannot calculate savings without current price`);
+      console.log(`  ⊘ Skipped (no pricing data available): ${item.raw_product_name} - matched but cannot calculate savings without any price reference`);
       continue;
     }
-    
-    // Use real pricing data for calculations
-    const effectiveUserPrice = hasUserPrice ? item.unit_price : matchedProduct.list_price;
-    const priceSource = hasUserPrice ? 'user_file' : 'partner_list_price';
 
     // We have enough data - analyze this item
     itemsAnalyzed++;
@@ -2843,7 +2863,10 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
     const userCPP = hasPageYield ? calculateCostPerPage(effectiveUserPrice, matchedProduct.page_yield) : null;
     
     console.log(`  📊 Analyzing: ${item.raw_product_name}`);
-    console.log(`     User paying: $${effectiveUserPrice.toFixed(2)}/unit (${priceSource}), CPP: ${userCPP ? '$' + userCPP.toFixed(4) : 'N/A (no page yield)'}`);
+    console.log(`     User paying: $${effectiveUserPrice.toFixed(2)}/unit (${priceSource})${assumedPricingMessage ? ' [ASSUMED]' : ''}, CPP: ${userCPP ? '$' + userCPP.toFixed(4) : 'N/A (no page yield)'}`);
+    if (assumedPricingMessage) {
+      console.log(`     ℹ️  ${assumedPricingMessage}`);
+    }
     console.log(`     ASE price: $${asePrice}/unit${matchedProduct.page_yield ? ` (${matchedProduct.page_yield} pages)` : ''}, CPP: ${matchedCPP ? '$' + matchedCPP.toFixed(4) : 'N/A'}`);
 
     // STEP 1: Calculate basic price savings (same product, ASE price)
@@ -2925,7 +2948,8 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             reason: higherYieldRec.reason,
             type: 'larger_size'
           },
-          savings: higherYieldSavings
+          savings: higherYieldSavings,
+          ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
       } else {
         // Basic savings is better - use ASE price for same product
@@ -2964,7 +2988,8 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             reason: `Same product at ASE price: $${asePrice.toFixed(2)}/unit (save $${basicSavingsPerUnit.toFixed(2)}/unit)`,
             type: 'better_price'
           },
-          savings: basicTotalSavings
+          savings: basicTotalSavings,
+          ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
       }
     } else {
@@ -3003,7 +3028,8 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             reason: `Same product at ASE price: $${asePrice.toFixed(2)}/unit (save $${basicSavingsPerUnit.toFixed(2)}/unit)`,
             type: 'better_price'
           },
-          savings: basicTotalSavings
+          savings: basicTotalSavings,
+          ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
       } else {
         // No savings at all (user already paying at or below ASE price)
@@ -3011,7 +3037,8 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
         breakdown.push({
           ...item,
           savings: 0,
-          recommendation: 'Already at or below ASE price'
+          recommendation: 'Already at or below ASE price',
+          ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
         console.log(`     ✓ Already at or below ASE price (no savings possible)`);
       }

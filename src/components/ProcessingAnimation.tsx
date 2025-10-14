@@ -97,10 +97,6 @@ export function ProcessingAnimation({ submissionId, onComplete }: ProcessingAnim
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-primary font-bold">•</span>
-                    <span><strong>Price</strong> (unit cost per item)</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-primary font-bold">•</span>
                     <span><strong>Quantity</strong> (number ordered)</span>
                   </li>
                 </ul>
