@@ -79,6 +79,9 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   const brandNavy = '#2A2963';
   const lightGray = '#F5F5F5';
   const darkGray = '#666666';
+  const brandGreen = '#22C55E';      // Modern green for environmental
+  const lightGreen = '#F0FDF4';      // Light green background
+  const darkGreen = '#15803D';       // Dark green for emphasis
 
   let yPos = 20;
 
@@ -143,9 +146,9 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   
   yPos += 12;
 
-  // Executive Summary Box
-  doc.setFillColor(lightGray);
-  doc.rect(margin, yPos, contentWidth, 45, 'F');
+  // Executive Summary Box - with modern rounded corners
+  doc.setFillColor(245, 245, 245); // Light gray
+  doc.roundedRect(margin, yPos, contentWidth, 45, 2, 2, 'F');
   
   yPos += 8;
   
@@ -190,20 +193,20 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.setTextColor(darkGray);
   doc.text(`${data.summary.items_with_savings} with savings`, col2X, yPos + 14);
 
-  yPos += 25;
+  yPos += 20;
 
-  // Environmental Impact Box
-  yPos += 8;
-  doc.setFillColor(255, 255, 255);
-  doc.setDrawColor(brandRed);
-  doc.setLineWidth(0.3);
-  doc.rect(margin, yPos, contentWidth, 55, 'D');
+  // Environmental Impact Box - with green styling
+  yPos += 5;
+  doc.setFillColor(240, 253, 244); // Light green background
+  doc.setDrawColor(34, 197, 94); // Green border
+  doc.setLineWidth(0.5);
+  doc.roundedRect(margin, yPos, contentWidth, 52, 3, 3, 'FD'); // Rounded corners with fill and draw
   
   yPos += 8;
   
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandNavy);
+  doc.setTextColor(21, 128, 61); // Dark green for title
   doc.text('Environmental Impact', margin + 5, yPos);
   
   yPos += 10;
@@ -221,7 +224,7 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.text('Cartridges Saved', envCol1, yPos);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandRed);
+  doc.setTextColor(34, 197, 94); // Green
   doc.text(`${data.summary.environmental.cartridges_saved}`, envCol1, yPos + 7);
   
   // CO2 Reduced
@@ -231,7 +234,7 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.text('CO₂ Reduced (lbs)', envCol2, yPos);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandRed);
+  doc.setTextColor(34, 197, 94); // Green
   doc.text(`${data.summary.environmental.co2_reduced_pounds.toFixed(0)}`, envCol2, yPos + 7);
   
   // Trees Saved
@@ -241,7 +244,7 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.text('Trees Equivalent', envCol3, yPos);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandRed);
+  doc.setTextColor(34, 197, 94); // Green
   doc.text(`${data.summary.environmental.trees_saved.toFixed(2)}`, envCol3, yPos + 7);
 
   yPos += 18;
@@ -258,7 +261,7 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.text('Plastic Reduced (lbs)', envCol1Row2, yPos);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandRed);
+  doc.setTextColor(34, 197, 94); // Green
   doc.text(`${data.summary.environmental.plastic_reduced_pounds.toFixed(0)}`, envCol1Row2, yPos + 7);
   
   // Shipping Weight Saved
@@ -268,50 +271,51 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.text('Shipping Weight Saved (lbs)', envCol2Row2, yPos);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandRed);
+  doc.setTextColor(34, 197, 94); // Green
   doc.text(`${data.summary.environmental.shipping_weight_saved_pounds.toFixed(1)}`, envCol2Row2, yPos + 7);
 
   yPos += 20;
 
-  // Key Quality Benefits Section
-  yPos += 8;
+  // Key Quality Benefits Section - with modern styling
+  yPos += 5;
   doc.setFillColor(255, 255, 255);
-  doc.setDrawColor(brandNavy);
-  doc.setLineWidth(0.3);
-  doc.rect(margin, yPos, contentWidth, 70, 'D');
+  doc.setDrawColor(42, 41, 99); // Navy
+  doc.setLineWidth(0.5);
+  doc.roundedRect(margin, yPos, contentWidth, 60, 3, 3, 'D');
   
-  yPos += 8;
+  yPos += 6;
   
-  doc.setFontSize(13);
+  doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text('💡 Key Quality Benefits When You Switch', margin + 5, yPos);
+  doc.text('Key Quality Benefits', margin + 5, yPos);
   
-  yPos += 8;
+  yPos += 6;
 
-  // Benefits list with checkmarks
-  doc.setFontSize(9);
+  // Benefits list with bullet points
+  doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
   
   const benefits = [
-    '✅ 2-year Warranty Guarantee',
-    '✅ STMC & ISO Certified – Certified for performance, yield, and reliability',
-    '✅ Independent Lab Tested – Validated by Buyer\'s Lab for quality and consistency',
-    '✅ Green Choice – Reduces landfill waste & cuts environmental impact by 50%',
-    '✅ World\'s Largest Cartridge Recycler. OEM-Equivalent, EcoLabel Certified.',
-    '✅ Tariff-Free – Avoid hidden import fees and volatile overseas pricing',
-    '✅ Delivery Time – 2-day Delivery',
-    '✅ Veteran-Owned – 5% of profits donated to U.S. Military Veteran support orgs.'
+    '2-year Warranty Guarantee',
+    'STMC & ISO Certified - Performance, yield, and reliability tested',
+    'Independent Lab Tested - Validated by Buyer\'s Lab for quality',
+    'Green Choice - Reduces landfill waste by 50%',
+    'World\'s Largest Cartridge Recycler - OEM-Equivalent, EcoLabel Certified',
+    'Tariff-Free - Avoid hidden import fees',
+    'Fast Delivery - 2-day shipping available',
+    'Veteran-Owned - 5% donated to U.S. Military Veteran support'
   ];
   
   benefits.forEach((benefit) => {
-    const benefitLines = doc.splitTextToSize(benefit, contentWidth - 10);
-    benefitLines.forEach((line: string) => {
-      doc.text(line, margin + 5, yPos);
-      yPos += 4;
+    doc.text('•', margin + 5, yPos);
+    const benefitLines = doc.splitTextToSize(benefit, contentWidth - 15);
+    benefitLines.forEach((line: string, idx: number) => {
+      doc.text(line, margin + 9, yPos);
+      if (idx < benefitLines.length - 1) yPos += 3.5;
     });
-    yPos += 2; // Extra spacing between benefits
+    yPos += 4;
   });
 
   yPos += 5;
@@ -351,9 +355,10 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
 
       // Item box - increased height to accommodate wholesaler SKU
       const boxHeight = 65;
+      const boxStartY = yPos; // Store box start position for SAVE badge
       
-      doc.setFillColor(lightGray);
-      doc.rect(margin, yPos, contentWidth, boxHeight, 'F');
+      doc.setFillColor(245, 245, 245); // Light gray
+      doc.roundedRect(margin, yPos, contentWidth, boxHeight, 2, 2, 'F'); // Rounded corners
       
       yPos += 8;
 
@@ -431,20 +436,20 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
 
       yPos += 18;
 
-      // Savings badge
+      // Savings badge - positioned in top-right corner of box
       if (item.savings) {
-        const savingsX = pageWidth - margin - 45;
-        const savingsY = yPos - 35;
+        const savingsX = pageWidth - margin - 42;
+        const savingsY = boxStartY + 5; // Position 5mm from top of box
         
-        doc.setFillColor(brandRed);
-        doc.roundedRect(savingsX, savingsY, 40, 15, 2, 2, 'F');
+        doc.setFillColor(192, 0, 0); // Brand red
+        doc.roundedRect(savingsX, savingsY, 38, 16, 2, 2, 'F');
         
-        doc.setFontSize(10);
+        doc.setFontSize(9);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(255, 255, 255);
         doc.text('SAVE', savingsX + 3, savingsY + 6);
-        doc.setFontSize(12);
-        doc.text(`$${item.savings.cost_savings.toFixed(0)}`, savingsX + 3, savingsY + 12);
+        doc.setFontSize(11);
+        doc.text(`$${item.savings.cost_savings.toFixed(0)}`, savingsX + 3, savingsY + 13);
       }
 
       // Reason
