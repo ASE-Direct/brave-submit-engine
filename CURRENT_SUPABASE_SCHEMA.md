@@ -1,10 +1,18 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 14, 2025 (Fallback Pricing Logic with Messaging)
+**Last Updated:** October 14, 2025 (Enhanced Environmental Impact Tracking)
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
+- ✅ **ENHANCED ENVIRONMENTAL IMPACT (Oct 14, 2025):** Expanded environmental metrics with accurate calculations
+  - ✅ Updated plastic reduced calculation: 2 lbs per cartridge (previously 0.5 lbs)
+  - ✅ Added shipping weight savings tracking: 2.5 lbs per toner, 0.2 lbs per ink
+  - ✅ Enhanced PDF reports to display plastic reduced and shipping weight saved
+  - ✅ New environmental metrics displayed in two rows: Row 1 (Cartridges, CO2, Trees), Row 2 (Plastic, Shipping Weight)
+  - ✅ Updated savings_reports table with `shipping_weight_saved_pounds` field
+  - ✅ Individual item environmental_savings now includes plastic_reduced and shipping_weight_saved
+  - ✅ Result: More comprehensive environmental impact reporting with accurate sustainability metrics
 - ✅ **FALLBACK PRICING WITH MESSAGING (Oct 14, 2025):** Enhanced pricing strategy for items without explicit prices
   - ✅ Implemented 4-tier cascading fallback: User Price → List Price → Unit Price × 1.30 → Cost × 1.30
   - ✅ Items using assumed pricing now include clear message in report
@@ -360,7 +368,8 @@ Final reports with aggregated savings metrics.
 - `cartridges_saved` (INTEGER) - Fewer cartridges needed
 - `co2_reduced_pounds` (DECIMAL) - CO2 reduction in pounds
 - `trees_saved` (DECIMAL) - Equivalent trees
-- `plastic_reduced_pounds` (DECIMAL) - Plastic waste reduced
+- `plastic_reduced_pounds` (DECIMAL) - Plastic waste reduced (2 lbs per cartridge)
+- `shipping_weight_saved_pounds` (DECIMAL) - Shipping weight saved (2.5 lbs per toner, 0.2 lbs per ink)
 
 **Report:**
 - `report_data` (JSONB) - Full detailed breakdown

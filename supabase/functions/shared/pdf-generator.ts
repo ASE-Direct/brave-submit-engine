@@ -54,6 +54,8 @@ interface ReportData {
     };
     reason?: string;
     recommendation_type?: string;
+    message?: string; // Transparency message for assumed pricing
+    price_source?: string; // Source of pricing (user_file, catalog_list_price, etc.)
   }>;
 }
 
@@ -110,7 +112,7 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
     doc.setFontSize(11);
     doc.setTextColor(brandNavy);
     doc.setFont('helvetica', 'normal');
-    doc.text('Better American Value', margin, yPos);
+    doc.text('Buy American Veteran', margin, yPos);
     yPos += 12; // Increased spacing after fallback logo too
   }
 
@@ -195,7 +197,7 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.setFillColor(255, 255, 255);
   doc.setDrawColor(brandRed);
   doc.setLineWidth(0.3);
-  doc.rect(margin, yPos, contentWidth, 35, 'D');
+  doc.rect(margin, yPos, contentWidth, 55, 'D');
   
   yPos += 8;
   
@@ -206,7 +208,7 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   
   yPos += 10;
 
-  // Environmental metrics in 3 columns
+  // Environmental metrics - Row 1: 3 columns
   const envCol1 = margin + 5;
   const envCol2 = margin + contentWidth / 3;
   const envCol3 = margin + (contentWidth * 2 / 3);
@@ -242,7 +244,77 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
   doc.setTextColor(brandRed);
   doc.text(`${data.summary.environmental.trees_saved.toFixed(2)}`, envCol3, yPos + 7);
 
+  yPos += 18;
+
+  // Environmental metrics - Row 2: 2 columns
+  const envCol1Row2 = margin + 5;
+  const envCol2Row2 = margin + contentWidth / 2;
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(darkGray);
+  
+  // Plastic Reduced
+  doc.text('Plastic Reduced (lbs)', envCol1Row2, yPos);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandRed);
+  doc.text(`${data.summary.environmental.plastic_reduced_pounds.toFixed(0)}`, envCol1Row2, yPos + 7);
+  
+  // Shipping Weight Saved
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(darkGray);
+  doc.text('Shipping Weight Saved (lbs)', envCol2Row2, yPos);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandRed);
+  doc.text(`${data.summary.environmental.shipping_weight_saved_pounds.toFixed(1)}`, envCol2Row2, yPos + 7);
+
   yPos += 20;
+
+  // Key Quality Benefits Section
+  yPos += 8;
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(brandNavy);
+  doc.setLineWidth(0.3);
+  doc.rect(margin, yPos, contentWidth, 70, 'D');
+  
+  yPos += 8;
+  
+  doc.setFontSize(13);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandNavy);
+  doc.text('💡 Key Quality Benefits When You Switch', margin + 5, yPos);
+  
+  yPos += 8;
+
+  // Benefits list with checkmarks
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(darkGray);
+  
+  const benefits = [
+    '✅ 2-year Warranty Guarantee',
+    '✅ STMC & ISO Certified – Certified for performance, yield, and reliability',
+    '✅ Independent Lab Tested – Validated by Buyer\'s Lab for quality and consistency',
+    '✅ Green Choice – Reduces landfill waste & cuts environmental impact by 50%',
+    '✅ World\'s Largest Cartridge Recycler. OEM-Equivalent, EcoLabel Certified.',
+    '✅ Tariff-Free – Avoid hidden import fees and volatile overseas pricing',
+    '✅ Delivery Time – 2-day Delivery',
+    '✅ Veteran-Owned – 5% of profits donated to U.S. Military Veteran support orgs.'
+  ];
+  
+  benefits.forEach((benefit) => {
+    const benefitLines = doc.splitTextToSize(benefit, contentWidth - 10);
+    benefitLines.forEach((line: string) => {
+      doc.text(line, margin + 5, yPos);
+      yPos += 4;
+    });
+    yPos += 2; // Extra spacing between benefits
+  });
+
+  yPos += 5;
 
   // ===== PAGE 2+: DETAILED BREAKDOWN =====
   
@@ -309,7 +381,22 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
           : `${item.current_product.quantity} units (Price not available)`;
         doc.text(currentPriceText, margin + 3, yPos + 13);
 
-      yPos += 18;
+      // Display transparency message if pricing was assumed
+      let messageOffset = 0;
+      if (item.message) {
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'italic');
+        doc.setTextColor(100, 100, 100); // Gray color for message
+        const messageLines = doc.splitTextToSize(item.message, contentWidth - 10);
+        messageLines.forEach((line: string, idx: number) => {
+          doc.text(line, margin + 3, yPos + 17 + (idx * 4));
+          messageOffset = (idx + 1) * 4;
+        });
+        doc.setFont('helvetica', 'normal'); // Reset font
+        doc.setTextColor(darkGray); // Reset color
+      }
+
+      yPos += 18 + messageOffset;
 
       // Recommended Product
       if (item.recommended_product) {
@@ -433,7 +520,7 @@ export async function generatePDFReport(data: ReportData): Promise<Uint8Array> {
     
     // Copyright
     doc.text(
-      `© ${new Date().getFullYear()} Better American Value. All rights reserved.`,
+      `© ${new Date().getFullYear()} Buy American Veteran. All rights reserved.`,
       pageWidth / 2,
       pageHeight - 5,
       { align: 'center' }

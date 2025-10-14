@@ -1,11 +1,24 @@
 # Fallback Pricing Logic Implementation Summary
 
 **Implemented:** October 14, 2025  
-**Status:** ✅ Complete
+**Status:** ✅ Complete (with critical fix applied)
 
 ## Overview
 
 Enhanced the document processing logic to implement a 4-tier cascading pricing fallback strategy. When user documents don't provide explicit prices for items, the system now uses catalog data to estimate pricing and includes transparent messaging in the generated reports.
+
+## Critical Fix Applied (Oct 14, 2025 - Evening)
+
+**Issue Discovered:** The initial implementation calculated fallback pricing correctly in the backend, but the report generation still displayed "Price not available" because it was using the original `item.unit_price` (which was $0 for documents without prices) instead of the calculated `effectiveUserPrice`.
+
+**Root Cause:** The `effectiveUserPrice` was calculated locally in `calculateSavings()` but never stored in the breakdown items that get passed to report generation.
+
+**Solution:** Updated all four `breakdown.push()` calls to include:
+- `unit_price: effectiveUserPrice` - The calculated price using fallback logic
+- `total_price: currentCost` - The calculated total using effective price  
+- `price_source: priceSource` - Tracking which pricing method was used
+
+This ensures the report generation receives and displays the correct fallback pricing.
 
 ## What Changed
 
@@ -183,10 +196,16 @@ The implementation is complete and ready for testing. Recommended testing:
 
 ## Lines of Code Changed
 
+### Initial Implementation
 - **Added:** ~70 lines (cascading fallback logic, messaging, enhanced logging)
 - **Removed:** ~40 lines (old binary pricing check)
 - **Modified:** 4 breakdown.push() calls to include messages
 - **Net change:** +30 lines
+
+### Critical Fix
+- **Modified:** 4 breakdown.push() calls (lines 2940-2956, 2985-2999, 3028-3042, 3046-3054)
+- **Added to each:** 3 fields (`unit_price`, `total_price`, `price_source`)
+- **Net change:** +12 lines
 
 ## Impact
 

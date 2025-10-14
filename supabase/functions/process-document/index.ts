@@ -2731,6 +2731,8 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
   let itemsSkipped = 0;
   let cartridgesSaved = 0;
   let co2Reduced = 0;
+  let plasticReduced = 0;
+  let shippingWeightSaved = 0;
 
   const breakdown: any[] = [];
   
@@ -2911,8 +2913,13 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
         const cartridgesSavedHere = item.quantity - higherYieldRec.quantityNeeded;
         if (cartridgesSavedHere > 0) {
           cartridgesSaved += cartridgesSavedHere;
-          const co2PerCartridge = matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5;
+          const isToner = matchedProduct.category === 'toner_cartridge';
+          const co2PerCartridge = isToner ? 5.2 : 2.5;
+          const shippingWeightPerCartridge = isToner ? 2.5 : 0.2;
+          
           co2Reduced += cartridgesSavedHere * co2PerCartridge;
+          plasticReduced += cartridgesSavedHere * 2; // 2 lbs plastic per cartridge
+          shippingWeightSaved += cartridgesSavedHere * shippingWeightPerCartridge;
         }
 
         // Update database with capped values
@@ -2931,7 +2938,9 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             recommendation_type: 'larger_size',
             environmental_savings: {
               cartridges_saved: Math.max(0, cartridgesSavedHere),
-              co2_reduced: Math.max(0, cartridgesSavedHere * (matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5))
+              co2_reduced: Math.max(0, cartridgesSavedHere * (matchedProduct.category === 'toner_cartridge' ? 5.2 : 2.5)),
+              plastic_reduced: Math.max(0, cartridgesSavedHere * 2),
+              shipping_weight_saved: Math.max(0, cartridgesSavedHere * (matchedProduct.category === 'toner_cartridge' ? 2.5 : 0.2))
             }
           })
           .eq('processing_job_id', jobId)
@@ -2939,6 +2948,9 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
 
         breakdown.push({
           ...item,
+          unit_price: effectiveUserPrice, // Use effective price (fallback if original was 0)
+          total_price: currentCost, // Use calculated total with effective price
+          price_source: priceSource,
           recommendation: {
             product: higherYieldRec.recommended,
             quantity: higherYieldRec.quantityNeeded,
@@ -2981,6 +2993,9 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
 
         breakdown.push({
           ...item,
+          unit_price: effectiveUserPrice, // Use effective price (fallback if original was 0)
+          total_price: currentCost, // Use calculated total with effective price
+          price_source: priceSource,
           recommendation: {
             product: matchedProduct,
             quantity: item.quantity,
@@ -3021,6 +3036,9 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
 
         breakdown.push({
           ...item,
+          unit_price: effectiveUserPrice, // Use effective price (fallback if original was 0)
+          total_price: currentCost, // Use calculated total with effective price
+          price_source: priceSource,
           recommendation: {
             product: matchedProduct,
             quantity: item.quantity,
@@ -3036,6 +3054,9 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
         totalOptimizedCost += currentCost;
         breakdown.push({
           ...item,
+          unit_price: effectiveUserPrice, // Use effective price (fallback if original was 0)
+          total_price: currentCost, // Use calculated total with effective price
+          price_source: priceSource,
           savings: 0,
           recommendation: 'Already at or below ASE price',
           ...(assumedPricingMessage && { message: assumedPricingMessage })
@@ -3064,7 +3085,8 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
         cartridges_saved: cartridgesSaved,
         co2_reduced_pounds: co2Reduced,
         trees_saved: co2Reduced / 48, // 1 tree absorbs ~48 lbs CO2/year
-        plastic_reduced_pounds: cartridgesSaved * 0.5
+        plastic_reduced_pounds: plasticReduced,
+        shipping_weight_saved_pounds: shippingWeightSaved
       }
     },
     breakdown
@@ -3121,7 +3143,9 @@ async function generateReport(savingsAnalysis: any, context: ProcessingContext):
             co2_reduced: (item.recommendation?.cartridges_saved || 0) * 2.5
           } : undefined,
           reason: item.recommendation?.reason || undefined,
-          recommendation_type: item.recommendation?.type || undefined
+          recommendation_type: item.recommendation?.type || undefined,
+          message: item.message || undefined, // Transparency message for assumed pricing
+          price_source: item.price_source || undefined // Track pricing source
         }))
     };
 
@@ -3209,6 +3233,7 @@ async function saveFinalReport(savingsAnalysis: any, context: ProcessingContext,
       co2_reduced_pounds: capValue(savingsAnalysis.summary.environmental.co2_reduced_pounds),
       trees_saved: capValue(savingsAnalysis.summary.environmental.trees_saved),
       plastic_reduced_pounds: capValue(savingsAnalysis.summary.environmental.plastic_reduced_pounds),
+      shipping_weight_saved_pounds: capValue(savingsAnalysis.summary.environmental.shipping_weight_saved_pounds),
       report_data: savingsAnalysis,
       pdf_url: reportUrl,
       customer_name: `${context.customerInfo.firstName} ${context.customerInfo.lastName}`,
