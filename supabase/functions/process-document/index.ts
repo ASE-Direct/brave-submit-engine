@@ -2576,7 +2576,7 @@ function validateMinimumDataRequirements(items: any[]): {
       missingQuantity
     },
     errorMessage: isValid ? undefined : 
-      `Insufficient data for savings calculation: Only ${itemsWithCompleteData} of ${items.length} items (${percentComplete.toFixed(0)}%) have the required information (Item Name/SKU + Price + Quantity). Please upload a buy sheet, order invoice, quote, or item usage report that includes this information.`
+      `We're unable to calculate savings because your document is missing required information. Please upload a buy sheet, order invoice, quote, or item usage report that includes Item Name/SKU, Price, and Quantity for each product.`
   };
 }
 

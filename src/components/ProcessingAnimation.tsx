@@ -3,7 +3,6 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { CheckCircle, FileText, Search, Settings, FileCheck, AlertCircle } from "lucide-react";
 import { pollProcessingStatus } from "@/lib/api/processing";
-import { useToast } from "@/hooks/use-toast";
 
 interface ProcessingAnimationProps {
   submissionId: string;
@@ -34,7 +33,6 @@ export function ProcessingAnimation({ submissionId, onComplete }: ProcessingAnim
   const [error, setError] = useState<string | null>(null);
   const [currentFactIndex, setCurrentFactIndex] = useState(0);
   const [shuffledFacts, setShuffledFacts] = useState<string[]>([]);
-  const { toast } = useToast();
 
   // Shuffle facts on component mount for each new submission
   useEffect(() => {
@@ -69,16 +67,11 @@ export function ProcessingAnimation({ submissionId, onComplete }: ProcessingAnim
       .catch((err) => {
         console.error('Processing error:', err);
         setError(err.message);
-        toast({
-          title: "Processing Failed",
-          description: err.message || "An error occurred during processing",
-          variant: "destructive",
-        });
       });
-  }, [submissionId, onComplete, toast]);
+  }, [submissionId, onComplete]);
 
   if (error) {
-    const isValidationError = error.includes('Insufficient data') || error.includes('required information');
+    const isValidationError = error.includes('missing required information') || error.includes('required information');
     
     return (
       <div className="w-full max-w-2xl mx-auto p-4 sm:p-6 space-y-6 bg-card rounded-lg shadow-lg">

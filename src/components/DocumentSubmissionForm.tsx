@@ -113,21 +113,10 @@ export function DocumentSubmissionForm() {
       // Start background processing
       try {
         await startProcessing(result.submissionId);
-        
-        toast({
-          title: "Success!",
-          description: "Your document is being processed",
-        });
-        
         setIsProcessing(true);
       } catch (procError) {
         console.error("Processing error:", procError);
         setIsSubmitting(false);
-        toast({
-          title: "Processing Error",
-          description: "Document uploaded but processing failed. Please contact support.",
-          variant: "destructive",
-        });
       }
     } catch (error) {
       console.error("Submission error:", error);
