@@ -572,6 +572,31 @@ async function processChunk(
     const extractionValidation = validateExtraction(chunk);
     console.log(`📋 Extraction validation: ${extractionValidation.quality}`);
     
+    // NEW: Validate minimum data requirements
+    const dataValidation = validateMinimumDataRequirements(chunk);
+    console.log(`📋 Data requirements validation: ${dataValidation.isValid ? 'PASSED' : 'FAILED'}`);
+    console.log(`   Items with complete data: ${dataValidation.itemsWithCompleteData}/${chunk.length}`);
+    console.log(`   Missing identifiers: ${dataValidation.missingDataDetails.missingIdentifier}`);
+    console.log(`   Missing price: ${dataValidation.missingDataDetails.missingPrice}`);
+    console.log(`   Missing quantity: ${dataValidation.missingDataDetails.missingQuantity}`);
+    
+    // If validation fails, stop processing immediately
+    if (!dataValidation.isValid) {
+      console.error('❌ Document validation failed:', dataValidation.errorMessage);
+      
+      await updateProgress(context.jobId, 0, 'Validation failed', {
+        status: 'failed',
+        error_message: dataValidation.errorMessage,
+        completed_at: new Date().toISOString(),
+        metadata: {
+          validation_failed: true,
+          data_validation: dataValidation
+        }
+      });
+      
+      throw new Error(dataValidation.errorMessage);
+    }
+    
     // Store validation in job metadata (optional - for tracking)
     try {
       await supabase
@@ -579,6 +604,7 @@ async function processChunk(
         .update({
           metadata: {
             extraction_validation: extractionValidation,
+            data_validation: dataValidation,
             updated_at: new Date().toISOString()
           }
         })
@@ -2480,6 +2506,78 @@ function validateExtraction(items: any[]): {
   }
   
   return { quality, metrics, warnings };
+}
+
+/**
+ * Validate minimum data requirements for savings calculation
+ * Returns validation result with detailed breakdown of what's missing
+ */
+function validateMinimumDataRequirements(items: any[]): {
+  isValid: boolean;
+  itemsWithCompleteData: number;
+  itemsMissingData: number;
+  missingDataDetails: {
+    missingIdentifier: number;  // No name or SKU
+    missingPrice: number;
+    missingQuantity: number;
+  };
+  errorMessage?: string;
+} {
+  if (!items || items.length === 0) {
+    return {
+      isValid: false,
+      itemsWithCompleteData: 0,
+      itemsMissingData: 0,
+      missingDataDetails: {
+        missingIdentifier: 0,
+        missingPrice: 0,
+        missingQuantity: 0
+      },
+      errorMessage: 'No items extracted from document. Please upload a valid document with product data.'
+    };
+  }
+
+  // Check each item for minimum requirements
+  const itemsWithCompleteData = items.filter(item => {
+    // Has identifier: name or SKU
+    const hasIdentifier = (item.raw_product_name && item.raw_product_name.length > 2) ||
+                         (item.sku_fields?.all_skus?.length > 0);
+    
+    // Has pricing data
+    const hasPrice = item.unit_price && item.unit_price > 0;
+    
+    // Has quantity
+    const hasQuantity = item.quantity && item.quantity > 0;
+    
+    return hasIdentifier && hasPrice && hasQuantity;
+  }).length;
+  
+  const itemsMissingData = items.length - itemsWithCompleteData;
+  const percentComplete = (itemsWithCompleteData / items.length) * 100;
+  
+  // Calculate what's specifically missing
+  const missingIdentifier = items.filter(i => 
+    !(i.raw_product_name?.length > 2) && 
+    !(i.sku_fields?.all_skus?.length > 0)
+  ).length;
+  
+  const missingPrice = items.filter(i => !i.unit_price || i.unit_price <= 0).length;
+  const missingQuantity = items.filter(i => !i.quantity || i.quantity <= 0).length;
+  
+  const isValid = percentComplete >= 50; // At least 50% must have complete data
+  
+  return {
+    isValid,
+    itemsWithCompleteData,
+    itemsMissingData,
+    missingDataDetails: {
+      missingIdentifier,
+      missingPrice,
+      missingQuantity
+    },
+    errorMessage: isValid ? undefined : 
+      `Insufficient data for savings calculation: Only ${itemsWithCompleteData} of ${items.length} items (${percentComplete.toFixed(0)}%) have the required information (Item Name/SKU + Price + Quantity). Please upload a buy sheet, order invoice, quote, or item usage report that includes this information.`
+  };
 }
 
 /**

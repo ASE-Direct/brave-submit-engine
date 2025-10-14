@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Progress } from "@/components/ui/progress";
-import { CheckCircle, FileText, Search, Settings, FileCheck } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CheckCircle, FileText, Search, Settings, FileCheck, AlertCircle } from "lucide-react";
 import { pollProcessingStatus } from "@/lib/api/processing";
 import { useToast } from "@/hooks/use-toast";
 
@@ -77,12 +78,53 @@ export function ProcessingAnimation({ submissionId, onComplete }: ProcessingAnim
   }, [submissionId, onComplete, toast]);
 
   if (error) {
+    const isValidationError = error.includes('Insufficient data') || error.includes('required information');
+    
     return (
       <div className="w-full max-w-2xl mx-auto p-4 sm:p-6 space-y-6 bg-card rounded-lg shadow-lg">
         <div className="text-center space-y-4">
-          <div className="text-red-500 text-5xl">✕</div>
-          <h2 className="text-2xl font-bold text-secondary">Processing Failed</h2>
-          <p className="text-muted-foreground">{error}</p>
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-center justify-center gap-2 mb-3">
+              <AlertCircle className="w-6 h-6 text-red-600" />
+              <h2 className="text-xl sm:text-2xl font-bold text-red-900">
+                {isValidationError ? 'Missing Required Information' : 'Processing Failed'}
+              </h2>
+            </div>
+            <p className="text-sm text-red-800 mb-3 leading-relaxed">{error}</p>
+            
+            {isValidationError && (
+              <div className="mt-4 p-4 bg-white rounded-lg border border-red-100">
+                <p className="text-sm font-semibold text-gray-900 mb-2">
+                  To calculate savings, we need documents with:
+                </p>
+                <ul className="text-sm text-gray-700 space-y-2 list-none">
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary font-bold">•</span>
+                    <span><strong>Item Name, SKU, or Item Number</strong> (to identify products)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary font-bold">•</span>
+                    <span><strong>Price</strong> (unit cost per item)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary font-bold">•</span>
+                    <span><strong>Quantity</strong> (number ordered)</span>
+                  </li>
+                </ul>
+                <div className="mt-3 pt-3 border-t border-gray-200">
+                  <p className="text-xs font-medium text-gray-600">
+                    ✓ Accepted documents: Buy sheets, order invoices, quotes, or item usage reports
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+          <Button 
+            onClick={() => window.location.reload()}
+            className="w-full sm:w-auto"
+          >
+            Upload Different Document
+          </Button>
         </div>
       </div>
     );
