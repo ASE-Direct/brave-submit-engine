@@ -1846,6 +1846,38 @@ async function matchSingleProduct(item: any, index: number, total: number) {
   }
   
   // ======================================================================
+  // TIER 1.5: Exact Product Name match
+  // ======================================================================
+  if (!bestMatch && item.raw_product_name && item.raw_product_name !== 'Unknown Product' && item.raw_product_name.length > 3) {
+    console.log(`     🎯 TIER 1.5: Trying exact product name match...`);
+    
+    const match = await exactProductNameMatch(item.raw_product_name);
+    matchLog.push({
+      method: 'exact_name',
+      attempted_value: item.raw_product_name,
+      score: match ? match.score : 0,
+      product_id: match?.product?.id,
+      timestamp: new Date()
+    });
+    
+    if (match && match.score === 1.0) {
+      console.log(`        ✅ Exact product name match: ${match.product.product_name}`);
+      bestMatch = match;
+      
+      const duration = Date.now() - startTime;
+      console.log(`     ✅ MATCHED (exact_name) in ${duration}ms | Score: 1.00`);
+      return {
+        ...item,
+        matched_product: bestMatch.product,
+        match_score: bestMatch.score,
+        match_method: 'exact_name',
+        match_attempts: matchLog.length,
+        match_duration_ms: duration
+      };
+    }
+  }
+  
+  // ======================================================================
   // TIER 2: Fuzzy SKU match on ALL available SKU fields
   // ======================================================================
   if (item.sku_fields && item.sku_fields.all_skus && item.sku_fields.all_skus.length > 0) {
@@ -2016,6 +2048,54 @@ async function matchSingleProduct(item: any, index: number, total: number) {
     }
   }
 
+  // ======================================================================
+  // STRICT VALIDATION: Require at least ONE exact match
+  // ======================================================================
+  // We must have either:
+  // 1. Exact SKU match (score = 1.0, method = 'exact_sku'), OR
+  // 2. Exact product name match (score = 1.0 from ILIKE search)
+  // 
+  // This prevents unrelated documents from matching via fuzzy/semantic/AI methods
+  // ======================================================================
+  
+  let hasExactMatch = false;
+  
+  if (bestMatch) {
+    // Check if we have an exact SKU match
+    if (bestMatch.method === 'exact_sku' && bestMatch.score === 1.0) {
+      hasExactMatch = true;
+      console.log(`     ✓ EXACT MATCH VALIDATED: Exact SKU match found`);
+    }
+    // Check if we have an exact product name match
+    else if ((bestMatch.method === 'exact_name' || bestMatch.method === 'ilike_search') && bestMatch.score === 1.0) {
+      hasExactMatch = true;
+      console.log(`     ✓ EXACT MATCH VALIDATED: Exact product name match found`);
+    }
+    // Check if any match attempt in the log was an exact match
+    else {
+      // Look through all match attempts to see if we had any exact matches
+      const hadExactSKU = matchLog.some(attempt => 
+        attempt.method === 'exact_sku' && attempt.score === 1.0
+      );
+      const hadExactName = matchLog.some(attempt => 
+        (attempt.method === 'exact_name' || attempt.method === 'ilike_search') && attempt.score === 1.0
+      );
+      
+      if (hadExactSKU || hadExactName) {
+        hasExactMatch = true;
+        console.log(`     ✓ EXACT MATCH VALIDATED: Found exact match in attempt history`);
+      }
+    }
+  }
+  
+  // Reject match if no exact match was found
+  if (bestMatch && !hasExactMatch) {
+    console.log(`     ⚠️  MATCH REJECTED: No exact SKU or product name match found`);
+    console.log(`     ⚠️  Best match was ${bestMatch.method} with score ${bestMatch.score.toFixed(2)}, but this requires exact validation`);
+    console.log(`     💡 Item will be marked as unmatched for manual review`);
+    bestMatch = null; // Clear the match
+  }
+  
   // ======================================================================
   // Final Result
   // ======================================================================
@@ -2258,6 +2338,42 @@ async function exactSKUMatch(sku: string) {
       score: 1.0,
       method: 'exact_sku'
     };
+  }
+
+  return null;
+}
+
+/**
+ * Tier 1.5: Exact Product Name matching (case-insensitive)
+ * Returns score 1.0 ONLY for exact matches
+ */
+async function exactProductNameMatch(productName: string) {
+  if (!productName || productName.length < 3) return null;
+
+  const cleanName = productName.trim();
+
+  // Use ILIKE with exact match pattern for case-insensitive exact matching
+  // The ILIKE operator is case-insensitive in PostgreSQL
+  const { data, error } = await supabase
+    .from('master_products')
+    .select('*')
+    .ilike('product_name', cleanName)
+    .eq('active', true)
+    .limit(1)
+    .single();
+
+  if (!error && data) {
+    // Verify it's truly an exact match (not a partial ILIKE match)
+    const productNameLower = (data.product_name || '').toLowerCase().trim();
+    const cleanNameLower = cleanName.toLowerCase();
+    
+    if (productNameLower === cleanNameLower) {
+      return {
+        product: data,
+        score: 1.0,
+        method: 'exact_name'
+      };
+    }
   }
 
   return null;
