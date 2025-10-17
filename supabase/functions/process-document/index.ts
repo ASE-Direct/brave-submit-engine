@@ -365,6 +365,29 @@ interface MatchAttempt {
 }
 
 /**
+ * Determine match type based on product SKU
+ * Remanufactured products have ase_clover_number (typically end with -R)
+ * OEM products only have ase_oem_number
+ */
+function determineMatchType(matchedProduct: any, hasSavings: boolean): 'remanufactured' | 'oem' | 'no_match' {
+  if (!hasSavings) {
+    return 'no_match';
+  }
+  
+  // If product has ase_clover_number, it's remanufactured
+  if (matchedProduct.ase_clover_number) {
+    return 'remanufactured';
+  }
+  
+  // If product only has ase_oem_number, it's OEM
+  if (matchedProduct.ase_oem_number) {
+    return 'oem';
+  }
+  
+  return 'no_match';
+}
+
+/**
  * Update processing job progress
  */
 async function updateProgress(
@@ -548,7 +571,6 @@ async function processDocument(context: ProcessingContext) {
       status: 'completed',
       completed_at: new Date().toISOString(),
       report_url: customerUrl,
-      internal_report_url: internalUrl,
       savings_analysis: savingsAnalysis.summary
     });
 
@@ -3110,10 +3132,20 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             type: 'larger_size'
           },
           savings: higherYieldSavings,
-          match_type: higherYieldSavings > 0 ? 'remanufactured' : 'no_match',
+          match_type: determineMatchType(higherYieldRec.recommended, higherYieldSavings > 0),
           ase_sku: aseSku,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
+        
+        // Track for executive summary
+        if (higherYieldSavings > 0) {
+          const matchType = determineMatchType(higherYieldRec.recommended, true);
+          if (matchType === 'remanufactured') {
+            remanufacturedCount++;
+          } else if (matchType === 'oem') {
+            oemCount++;
+          }
+        }
       } else {
         // Basic savings is better - use ASE price for same product
         totalOptimizedCost += basicOptimizedCost;
@@ -3164,9 +3196,14 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
           .eq('processing_job_id', jobId)
           .eq('raw_product_name', item.raw_product_name);
 
-        // Track match type for executive summary - OEM like-kind exchange
+        // Track match type for executive summary
         if (basicTotalSavings > 0) {
-          oemCount++; // Same product better price = OEM like-kind exchange
+          const matchType = determineMatchType(matchedProduct, true);
+          if (matchType === 'remanufactured') {
+            remanufacturedCount++;
+          } else if (matchType === 'oem') {
+            oemCount++;
+          }
         }
         
         breakdown.push({
@@ -3182,7 +3219,7 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             type: 'better_price'
           },
           savings: basicTotalSavings,
-          match_type: basicTotalSavings > 0 ? 'oem' : 'no_match',
+          match_type: determineMatchType(matchedProduct, basicTotalSavings > 0),
           ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
@@ -3236,8 +3273,13 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
           .eq('processing_job_id', jobId)
           .eq('raw_product_name', item.raw_product_name);
 
-        // Track match type for executive summary - OEM like-kind exchange
-        oemCount++; // Same product better price = OEM like-kind exchange
+        // Track match type for executive summary
+        const matchType = determineMatchType(matchedProduct, true);
+        if (matchType === 'remanufactured') {
+          remanufacturedCount++;
+        } else if (matchType === 'oem') {
+          oemCount++;
+        }
         
         breakdown.push({
           ...item,
@@ -3252,7 +3294,7 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             type: 'better_price'
           },
           savings: basicTotalSavings,
-          match_type: 'oem',
+          match_type: determineMatchType(matchedProduct, true),
           ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
