@@ -489,7 +489,6 @@ async function processDocument(context: ProcessingContext) {
           page_yield,
           ase_price,
           partner_list_price,
-          cost,
           family_series,
           yield_class,
           pack_quantity,
