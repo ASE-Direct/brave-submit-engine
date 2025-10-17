@@ -110,7 +110,7 @@ interface VolumeHints {
 
 interface HigherYieldRecommendation {
   recommended: any; // Recommended product
-  recommendedPrice: number; // Price per unit (ase_unit_price or unit_price)
+  recommendedPrice: number; // Price per unit (ase_price or partner_list_price)
   cppCurrent: number; // Cost per page of current
   cppRecommended: number; // Cost per page of recommended
   est12moSavingsAtVolume: number; // Estimated 12-month savings
@@ -144,15 +144,15 @@ async function suggestHigherYield(
     return null;
   }
   
-  // Check BOTH ase_unit_price and unit_price (use either), FALLBACK to cost
-  const currentAsePrice = (currentProduct.ase_unit_price && currentProduct.ase_unit_price > 0)
-    ? currentProduct.ase_unit_price
-    : (currentProduct.unit_price && currentProduct.unit_price > 0)
-      ? currentProduct.unit_price
-      : currentProduct.cost;
+  // Use ase_price first, then partner_list_price as fallback
+  const currentAsePrice = (currentProduct.ase_price && currentProduct.ase_price > 0)
+    ? currentProduct.ase_price
+    : (currentProduct.partner_list_price && currentProduct.partner_list_price > 0)
+      ? currentProduct.partner_list_price
+      : null;
     
   if (!currentAsePrice || currentAsePrice <= 0) {
-    console.log('    ⊘ No ase_unit_price, unit_price, or cost for comparison');
+    console.log('    ⊘ No ase_price or partner_list_price for comparison');
     return null;
   }
   
@@ -167,7 +167,7 @@ async function suggestHigherYield(
     .eq('active', true)
     .not('page_yield', 'is', null)
     .gte('page_yield', currentProduct.page_yield * 0.8); // Allow slightly lower yield for edge cases
-  // Note: Not filtering by price here - we'll filter in JS to check both ase_unit_price and unit_price
+  // Note: Not filtering by price here - we'll filter in JS to check both ase_price and partner_list_price
   
   if (error || !familyProducts || familyProducts.length === 0) {
     console.log('    ⊘ No family alternatives found');
@@ -186,8 +186,8 @@ async function suggestHigherYield(
       return false;
     }
     
-    // Must have valid pricing (check BOTH fields, FALLBACK to cost)
-    const hasPrice = (p.ase_unit_price && p.ase_unit_price > 0) || (p.unit_price && p.unit_price > 0) || (p.cost && p.cost > 0);
+    // Must have valid pricing (check ase_price first, then partner_list_price)
+    const hasPrice = (p.ase_price && p.ase_price > 0) || (p.partner_list_price && p.partner_list_price > 0);
     if (!hasPrice) {
       return false;
     }
@@ -215,8 +215,8 @@ async function suggestHigherYield(
   // Rank by CPP (lowest is best)
   const ranked = sameColorFamily
     .map(p => {
-      // Use whichever price field is available, FALLBACK to cost
-      const pPrice = (p.ase_unit_price && p.ase_unit_price > 0) ? p.ase_unit_price : (p.unit_price && p.unit_price > 0) ? p.unit_price : p.cost;
+      // Use ase_price first, then partner_list_price as fallback
+      const pPrice = (p.ase_price && p.ase_price > 0) ? p.ase_price : (p.partner_list_price && p.partner_list_price > 0) ? p.partner_list_price : 0;
       const cpp = calculateCostPerPage(pPrice, p.page_yield);
       if (!cpp) return null;
       
@@ -265,12 +265,12 @@ async function suggestHigherYield(
   
   // Calculate actual savings based on user's current spending
   const userCurrentCost = userQuantity * userUnitPrice;
-  // Use whichever price field is available for the recommended product, FALLBACK to cost
-  const recommendedPrice = (best.product.ase_unit_price && best.product.ase_unit_price > 0) 
-    ? best.product.ase_unit_price 
-    : (best.product.unit_price && best.product.unit_price > 0)
-      ? best.product.unit_price
-      : best.product.cost;
+  // Use ase_price first, then partner_list_price as fallback
+  const recommendedPrice = (best.product.ase_price && best.product.ase_price > 0) 
+    ? best.product.ase_price 
+    : (best.product.partner_list_price && best.product.partner_list_price > 0)
+      ? best.product.partner_list_price
+      : 0;
   const recommendedCost = quantityNeeded * recommendedPrice;
   const actualSavings = userCurrentCost - recommendedCost;
   
@@ -479,7 +479,7 @@ async function processDocument(context: ProcessingContext) {
         *,
         matched_product:matched_product_id (
           id,
-          sku,
+          ase_clover_number,
           product_name,
           brand,
           model,
@@ -488,8 +488,8 @@ async function processDocument(context: ProcessingContext) {
           color_type,
           page_yield,
           unit_price,
-          ase_unit_price,
-          list_price,
+          ase_price,
+          partner_list_price,
           cost,
           family_series,
           yield_class,
@@ -499,7 +499,8 @@ async function processDocument(context: ProcessingContext) {
           wholesaler_sku,
           oem_number,
           staples_sku,
-          depot_sku
+          depot_sku,
+          ase_oem_number
         )
       `)
       .eq('processing_job_id', context.jobId);
@@ -2119,7 +2120,7 @@ async function matchSingleProduct(item: any, index: number, total: number) {
   
   if (bestMatch) {
     console.log(`     ✅ MATCHED in ${duration}ms | Method: ${bestMatch.method} | Score: ${bestMatch.score.toFixed(2)}`);
-    console.log(`     📦 Product: ${bestMatch.product.product_name} (SKU: ${bestMatch.product.sku})`);
+    console.log(`     📦 Product: ${bestMatch.product.product_name} (SKU: ${bestMatch.product.ase_clover_number})`);
   } else {
     console.log(`     ❌ NO MATCH after ${matchLog.length} attempts in ${duration}ms`);
     console.log(`     💡 Consider manual review for: "${item.raw_product_name}"`);
@@ -2206,7 +2207,7 @@ Respond with ONLY a JSON object in this exact format:
         // Boost score for matching attributes
         if (parsed.brand && product.brand?.toLowerCase().includes(parsed.brand.toLowerCase())) score += 0.15;
         if (parsed.model && (product.model?.toLowerCase().includes(parsed.model.toLowerCase()) || 
-                             product.sku?.toLowerCase().includes(parsed.model.toLowerCase()))) score += 0.15;
+                             product.ase_clover_number?.toLowerCase().includes(parsed.model.toLowerCase()))) score += 0.15;
         if (parsed.color && product.color_type?.toLowerCase() === parsed.color) score += 0.05;
         
         if (score > bestScore) {
@@ -2343,7 +2344,7 @@ async function exactSKUMatch(sku: string) {
   const { data, error } = await supabase
     .from('master_products')
     .select('*')
-    .or(`sku.eq.${cleanSku},oem_number.eq.${cleanSku},wholesaler_sku.eq.${cleanSku},staples_sku.eq.${cleanSku},depot_sku.eq.${cleanSku}`)
+    .or(`ase_clover_number.eq.${cleanSku},oem_number.eq.${cleanSku},wholesaler_sku.eq.${cleanSku},staples_sku.eq.${cleanSku},depot_sku.eq.${cleanSku},ase_oem_number.eq.${cleanSku}`)
     .eq('active', true)
     .limit(1)
     .single();
@@ -2435,7 +2436,7 @@ async function fuzzySKUMatch(sku: string) {
     const { data, error} = await supabase
       .from('master_products')
       .select('*')
-      .or(`sku.ilike.%${searchSku}%,oem_number.ilike.%${searchSku}%,wholesaler_sku.ilike.%${searchSku}%,staples_sku.ilike.%${searchSku}%,depot_sku.ilike.%${searchSku}%`)
+      .or(`ase_clover_number.ilike.%${searchSku}%,oem_number.ilike.%${searchSku}%,wholesaler_sku.ilike.%${searchSku}%,staples_sku.ilike.%${searchSku}%,depot_sku.ilike.%${searchSku}%,ase_oem_number.ilike.%${searchSku}%`)
       .eq('active', true)
       .limit(5);
 
@@ -2443,11 +2444,12 @@ async function fuzzySKUMatch(sku: string) {
       // Find best match by comparing normalized SKUs across all SKU fields
       for (const product of data) {
         const productSkus = [
-          product.sku,
+          product.ase_clover_number,
           product.oem_number,
           product.wholesaler_sku,
           product.staples_sku,
-          product.depot_sku
+          product.depot_sku,
+          product.ase_oem_number
         ].filter(Boolean); // Remove null/undefined
         
         for (const productSku of productSkus) {
@@ -2905,31 +2907,28 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
     const matchedProduct = item.matched_product;
     
     // Check if we have required data for savings calculation
-    // Check BOTH ase_unit_price and unit_price (they're usually the same, use either)
-    // FALLBACK: Use cost if no ASE pricing available
-    const hasAsePrice = (matchedProduct.ase_unit_price && matchedProduct.ase_unit_price > 0) ||
-                        (matchedProduct.unit_price && matchedProduct.unit_price > 0) ||
-                        (matchedProduct.cost && matchedProduct.cost > 0);
+    // Use ase_price first, then partner_list_price as fallback
+    const hasAsePrice = (matchedProduct.ase_price && matchedProduct.ase_price > 0) ||
+                        (matchedProduct.partner_list_price && matchedProduct.partner_list_price > 0);
     const hasPageYield = matchedProduct.page_yield && matchedProduct.page_yield > 0;
     
-    // Get the ASE price (use whichever field has a value, prioritize ase_unit_price > unit_price > cost)
-    const asePrice = (matchedProduct.ase_unit_price && matchedProduct.ase_unit_price > 0) 
-      ? matchedProduct.ase_unit_price 
-      : (matchedProduct.unit_price && matchedProduct.unit_price > 0)
-        ? matchedProduct.unit_price
-        : matchedProduct.cost || 0;
+    // Get the ASE price (prioritize ase_price > partner_list_price)
+    const asePrice = (matchedProduct.ase_price && matchedProduct.ase_price > 0) 
+      ? matchedProduct.ase_price 
+      : (matchedProduct.partner_list_price && matchedProduct.partner_list_price > 0)
+        ? matchedProduct.partner_list_price
+        : 0;
     
     // PRICING VALIDATION WITH CASCADING FALLBACK:
     // Priority 1: User's price from document (most accurate)
-    // Priority 2: Catalog list_price (partner/retail pricing)
-    // Priority 3: Estimated from unit_price * 1.30 (30% markup)
-    // Priority 4: Estimated from cost * 1.30 (30% markup)
+    // Priority 2: Catalog partner_list_price (partner/retail pricing)
+    // Priority 3: Estimated from ase_price * 1.30 (30% markup)
+    // Priority 4: Estimated from partner_list_price * 1.30 (30% markup)
     // Last Resort: Skip if no pricing data available at all
     
     const hasUserPrice = item.unit_price && item.unit_price > 0;
-    const hasListPrice = matchedProduct.list_price && matchedProduct.list_price > 0;
-    const hasCatalogUnitPrice = matchedProduct.unit_price && matchedProduct.unit_price > 0;
-    const hasCost = matchedProduct.cost && matchedProduct.cost > 0;
+    const hasPartnerListPrice = matchedProduct.partner_list_price && matchedProduct.partner_list_price > 0;
+    const hasAsePrice_Check = matchedProduct.ase_price && matchedProduct.ase_price > 0;
     
     // If no ASE price at all, we can't calculate any savings
     if (!hasAsePrice) {
@@ -2957,21 +2956,16 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
       effectiveUserPrice = item.unit_price;
       priceSource = 'user_file';
       assumedPricingMessage = undefined; // No message needed - actual price provided
-    } else if (hasListPrice) {
-      // Priority 2: Use catalog list price
-      effectiveUserPrice = matchedProduct.list_price;
-      priceSource = 'catalog_list_price';
-      assumedPricingMessage = 'Note: Assumed pricing based on catalog list price since document didn\'t include price information.';
-    } else if (hasCatalogUnitPrice) {
-      // Priority 3: Estimate from unit_price with 30% markup
-      effectiveUserPrice = matchedProduct.unit_price * 1.30;
-      priceSource = 'estimated_from_unit_price';
-      assumedPricingMessage = 'Note: Assumed pricing based on estimated market price (30% markup from wholesale) since document didn\'t include price information.';
-    } else if (hasCost) {
-      // Priority 4: Estimate from cost with 30% markup
-      effectiveUserPrice = matchedProduct.cost * 1.30;
-      priceSource = 'estimated_from_cost';
-      assumedPricingMessage = 'Note: Assumed pricing based on estimated market price (30% markup from cost) since document didn\'t include price information.';
+    } else if (hasPartnerListPrice) {
+      // Priority 2: Use catalog partner_list_price
+      effectiveUserPrice = matchedProduct.partner_list_price;
+      priceSource = 'catalog_partner_list_price';
+      assumedPricingMessage = 'Note: Assumed pricing based on catalog partner list price since document didn\'t include price information.';
+    } else if (hasAsePrice_Check) {
+      // Priority 3: Estimate from ase_price with 30% markup
+      effectiveUserPrice = matchedProduct.ase_price * 1.30;
+      priceSource = 'estimated_from_ase_price';
+      assumedPricingMessage = 'Note: Assumed pricing based on estimated market price (30% markup from ASE price) since document didn\'t include price information.';
     } else {
       // Last Resort: No pricing data available at all - skip this item
       breakdown.push({
@@ -3336,7 +3330,7 @@ async function generateReport(savingsAnalysis: any, context: ProcessingContext):
           },
           recommended_product: (item.recommendation && item.recommendation.product && item.recommendation.product.product_name) ? {
             name: item.recommendation.product.product_name,
-            sku: item.recommendation.product.sku || 'N/A',
+            sku: item.recommendation.product.ase_clover_number || 'N/A',
             wholesaler_sku: item.recommendation.product.wholesaler_sku || null,
             quantity_needed: item.recommendation.quantity || 0,
             unit_price: item.recommendation.product.unit_price || 0,

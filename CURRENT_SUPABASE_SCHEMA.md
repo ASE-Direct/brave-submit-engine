@@ -1,10 +1,41 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 14, 2025 (Enhanced Environmental Impact Tracking)
+**Last Updated:** October 17, 2025 (Process-Document Function Column Update)
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
+- ✅ **PROCESS-DOCUMENT FUNCTION UPDATE (Oct 17, 2025):** Updated Edge Function to use correct column names
+  - ✅ **Updated pricing logic** - Now uses `ase_price` → `partner_list_price` (instead of old normalized columns)
+  - ✅ **SKU matching CORRECTED** - Now using: ase_clover_number, oem_number, wholesaler_sku, staples_sku, depot_sku, ase_oem_number
+  - ✅ **Primary SKU column** - Changed from `sku` to `ase_clover_number` (actual database column name)
+  - ✅ **Pricing priority** - Priority 1: ase_price (ASE Price from CSV), Priority 2: partner_list_price (Partner List Price)
+  - ✅ **Fallback logic updated** - For user pricing: User File → Partner List Price → ASE Price × 1.30 → Skip
+  - ✅ **All references updated** - exactSKUMatch, fuzzySKUMatch, findHigherYieldAlternative, CPP calculations, recommendations, main savings logic
+  - ✅ **SELECT query updated** - Now fetches ase_clover_number, ase_price, partner_list_price, and ase_oem_number columns
+  - ✅ File: `supabase/functions/process-document/index.ts`
+  - ✅ Documentation: `PROCESS_DOCUMENT_COLUMN_UPDATE.md`
+  - ✅ Result: Function now correctly uses actual database column names for accurate matching and savings calculations
+- ✅ **DUPLICATE REMOVAL & CSV COLUMN SYNC (Oct 17, 2025 - Final):** Complete database cleanup and column synchronization
+  - ✅ **Removed 503 duplicate products** - Deleted non-R versions where -R version exists
+  - ✅ **Updated all foreign key references** - order_items_extracted now points to -R products
+  - ✅ **Added 29 new CSV columns** for complete catalog parity with source
+  - ✅ **Final count: 1,573 products** (564 with -R, 1,009 unique without -R)
+  - ✅ Dual column strategy: Normalized columns for app + Raw CSV columns for auditing
+  - ✅ New columns: seq, ase_price, clover_cogs, contract_status, product_class, partner_list_price, partner_cost, and 22 more
+  - ✅ Migration: `supabase/migrations/20251017_add_csv_columns.sql`
+  - ✅ Scripts: `remove-duplicate-products.ts` and updated `import-master-products-from-staples.ts`
+  - ✅ Result: Clean database with no duplicates and complete CSV data preservation
+- ✅ **MASTER PRODUCTS FULL SYNC (Oct 17, 2025):** Updated master_products table with complete Staples catalog
+  - ✅ Imported 567 products from `Staples.To.Clover.9.26.25.xlsx` CSV file
+  - ✅ All ASE Clover Numbers now have `-R` suffix for internal tracking (564 products with -R suffix)
+  - ✅ Column mapping: ASE Clover Number → sku, ASE Price → unit_price, Clover COGS → cost, PARTNER LIST PRICE → list_price
+  - ✅ Cross-reference mapping: OEM Number → oem_number, ASE OEM Number → wholesaler_sku, Staples Part Number → staples_sku
+  - ✅ Automatic detection of category (ink_cartridge vs toner_cartridge), color_type, size_category, yield_class, oem_vs_compatible
+  - ✅ De-duplicated SKUs within CSV (kept first occurrence)
+  - ✅ All products have pricing data (unit_price or cost fallback)
+  - ✅ Script: `scripts/import-master-products-from-staples.ts`
+  - ✅ Result: Database is now 1-for-1 match with Staples master catalog
 - ✅ **ENHANCED ENVIRONMENTAL IMPACT (Oct 14, 2025):** Expanded environmental metrics with accurate calculations
   - ✅ Updated plastic reduced calculation: 2 lbs per cartridge (previously 0.5 lbs)
   - ✅ Added shipping weight savings tracking: 2.5 lbs per toner, 0.2 lbs per ink
