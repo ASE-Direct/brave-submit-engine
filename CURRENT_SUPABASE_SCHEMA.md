@@ -1,10 +1,22 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 17, 2025 (Process-Document Function Column Update)
+**Last Updated:** October 17, 2025 (Dual Report System Implementation)
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
+- ✅ **DUAL REPORT SYSTEM (Oct 17, 2025):** Implemented separate customer-facing and internal sales reports
+  - ✅ **Customer Report** - Simplified 3-page report (Executive Summary, Environmental/Benefits, Contact)
+  - ✅ **Internal Report** - Detailed report with SKU summary aggregation and full line item details
+  - ✅ **Executive Summary Enhanced** - Now shows SKU breakdown: Remanufactured, OEM like-kind exchange, No match TBD
+  - ✅ **SKU Summary Section** - Aggregates savings by unique ASE SKU (ase_clover_number or ase_oem_number)
+  - ✅ **Simplified Line Items** - Internal report shows ASE SKU instead of product names for recommendations
+  - ✅ **Match Type Tracking** - Each item categorized as 'remanufactured', 'oem', or 'no_match'
+  - ✅ **Database Update** - Added `internal_pdf_url` column to savings_reports table
+  - ✅ **Unique SKU Count** - Executive summary now displays count of distinct ASE SKUs identified
+  - ✅ Files: `pdf-generator-customer.ts`, `pdf-generator-internal.ts`, updated `process-document/index.ts`
+  - ✅ Migration: `supabase/migrations/20251017_add_internal_pdf_url.sql`
+  - ✅ Result: Sales team has detailed SKU-level analytics while customers see clean, simple reports
 - ✅ **PROCESS-DOCUMENT FUNCTION UPDATE (Oct 17, 2025):** Updated Edge Function to use correct column names
   - ✅ **Updated pricing logic** - Now uses `ase_price` → `partner_list_price` (instead of old normalized columns)
   - ✅ **SKU matching CORRECTED** - Now using: ase_clover_number, oem_number, wholesaler_sku, staples_sku, depot_sku, ase_oem_number
@@ -415,7 +427,8 @@ Final reports with aggregated savings metrics.
 
 **Report:**
 - `report_data` (JSONB) - Full detailed breakdown
-- `pdf_url` (TEXT) - Generated PDF URL
+- `pdf_url` (TEXT) - Generated customer-facing PDF URL
+- `internal_pdf_url` (TEXT) - Generated internal sales team PDF URL (with SKU summary and detailed line items)
 
 **Customer Info (Denormalized):**
 - `customer_name` (TEXT) - Customer full name

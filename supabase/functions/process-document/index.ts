@@ -536,18 +536,19 @@ async function processDocument(context: ProcessingContext) {
     
     await updateProgress(context.jobId, 78, 'Preparing report data...');
 
-    // Step 4: Generate PDF report (78-93%)
-    const reportUrl = await generateReport(savingsAnalysis, context);
+    // Step 4: Generate PDF reports - customer and internal (78-93%)
+    const { customerUrl, internalUrl } = await generateReport(savingsAnalysis, context);
     
-    await updateProgress(context.jobId, 93, 'Finalizing report...');
+    await updateProgress(context.jobId, 93, 'Finalizing reports...');
 
     // Step 5: Save final results (95-100%)
-    await saveFinalReport(savingsAnalysis, context, reportUrl);
+    await saveFinalReport(savingsAnalysis, context, customerUrl, internalUrl);
     
     await updateProgress(context.jobId, 100, 'Complete', {
       status: 'completed',
       completed_at: new Date().toISOString(),
-      report_url: reportUrl,
+      report_url: customerUrl,
+      internal_report_url: internalUrl,
       savings_analysis: savingsAnalysis.summary
     });
 
@@ -2865,6 +2866,11 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
   let co2Reduced = 0;
   let plasticReduced = 0;
   let shippingWeightSaved = 0;
+  
+  // Track categorization for executive summary
+  let remanufacturedCount = 0;
+  let oemCount = 0;
+  let noMatchCount = 0;
 
   const breakdown: any[] = [];
   
@@ -2892,10 +2898,14 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
       totalCurrentCost += currentCost;
       totalOptimizedCost += currentCost; // No savings possible, so optimized = current
       
+      noMatchCount++; // Track for executive summary
+      
       breakdown.push({
         ...item,
         savings: null,
-        recommendation: 'No match found'
+        recommendation: 'No match found',
+        match_type: 'no_match',
+        ase_sku: null
       });
       itemsSkipped++;
       console.log(`  ⊘ Skipped (no match, but counted $${currentCost.toFixed(2)} in baseline): ${item.raw_product_name}`);
@@ -2934,10 +2944,15 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
       totalCurrentCost += currentCost;
       totalOptimizedCost += currentCost;
       
+      noMatchCount++; // Track for executive summary
+      
       breakdown.push({
         ...item,
+        matched_product: matchedProduct,
         savings: 0,
-        recommendation: 'No ASE pricing available'
+        recommendation: 'No ASE pricing available',
+        match_type: 'no_match',
+        ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number || null
       });
       itemsSkipped++;
       console.log(`  ⊘ Skipped (no ASE price): ${item.raw_product_name}`);
@@ -2966,13 +2981,17 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
       assumedPricingMessage = 'Note: Assumed pricing based on estimated market price (30% markup from ASE price) since document didn\'t include price information.';
     } else {
       // Last Resort: No pricing data available at all - skip this item
+      noMatchCount++; // Track for executive summary
+      
       breakdown.push({
         ...item,
         matched_product: matchedProduct,
         savings: 0,
         recommendation: 'Pricing information needed to calculate savings',
         ase_price_available: asePrice,
-        message: `We found a match for this product! ASE price: $${asePrice.toFixed(2)}/unit. Upload a document with pricing to see potential savings.`
+        message: `We found a match for this product! ASE price: $${asePrice.toFixed(2)}/unit. Upload a document with pricing to see potential savings.`,
+        match_type: 'no_match',
+        ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number || null
       });
       itemsSkipped++;
       console.log(`  ⊘ Skipped (no pricing data available): ${item.raw_product_name} - matched but cannot calculate savings without any price reference`);
@@ -3070,6 +3089,12 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
           .eq('processing_job_id', jobId)
           .eq('raw_product_name', item.raw_product_name);
 
+        // Track match type for executive summary
+        const aseSku = higherYieldRec.recommended.ase_clover_number || higherYieldRec.recommended.ase_oem_number;
+        if (higherYieldSavings > 0) {
+          remanufacturedCount++; // Higher-yield with savings = remanufactured
+        }
+        
         breakdown.push({
           ...item,
           unit_price: effectiveUserPrice, // Use effective price (fallback if original was 0)
@@ -3085,6 +3110,8 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             type: 'larger_size'
           },
           savings: higherYieldSavings,
+          match_type: higherYieldSavings > 0 ? 'remanufactured' : 'no_match',
+          ase_sku: aseSku,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
       } else {
@@ -3137,6 +3164,11 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
           .eq('processing_job_id', jobId)
           .eq('raw_product_name', item.raw_product_name);
 
+        // Track match type for executive summary - OEM like-kind exchange
+        if (basicTotalSavings > 0) {
+          oemCount++; // Same product better price = OEM like-kind exchange
+        }
+        
         breakdown.push({
           ...item,
           unit_price: effectiveUserPrice, // Use effective price (fallback if original was 0)
@@ -3150,6 +3182,8 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             type: 'better_price'
           },
           savings: basicTotalSavings,
+          match_type: basicTotalSavings > 0 ? 'oem' : 'no_match',
+          ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
       }
@@ -3202,6 +3236,9 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
           .eq('processing_job_id', jobId)
           .eq('raw_product_name', item.raw_product_name);
 
+        // Track match type for executive summary - OEM like-kind exchange
+        oemCount++; // Same product better price = OEM like-kind exchange
+        
         breakdown.push({
           ...item,
           unit_price: effectiveUserPrice, // Use effective price (fallback if original was 0)
@@ -3215,6 +3252,8 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             type: 'better_price'
           },
           savings: basicTotalSavings,
+          match_type: 'oem',
+          ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
       } else {
@@ -3251,13 +3290,19 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             .eq('raw_product_name', item.raw_product_name);
         }
         
+        // Track as no_match since no savings possible
+        noMatchCount++;
+        
         breakdown.push({
           ...item,
+          matched_product: matchedProduct,
           unit_price: effectiveUserPrice, // Use effective price (fallback if original was 0)
           total_price: currentCost, // Use calculated total with effective price
           price_source: priceSource,
           savings: 0,
           recommendation: 'Already at or below ASE price',
+          match_type: 'no_match',
+          ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
         console.log(`     ✓ Already at or below ASE price (no savings possible)`);
@@ -3270,6 +3315,9 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
   console.log(`   Items analyzed: ${itemsAnalyzed}`);
   console.log(`   Items with savings: ${itemsWithSavings}`);
   console.log(`   Items skipped: ${itemsSkipped}`);
+  console.log(`   Remanufactured count: ${remanufacturedCount}`);
+  console.log(`   OEM like-kind exchange count: ${oemCount}`);
+  console.log(`   No match/TBD count: ${noMatchCount}`);
   console.log(`   Total savings: $${totalSavings.toFixed(2)}`);
 
   return {
@@ -3280,6 +3328,9 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
       savings_percentage: totalCurrentCost > 0 ? (totalSavings / totalCurrentCost) * 100 : 0,
       total_items: matchedItems.length,
       items_with_savings: itemsWithSavings,
+      remanufactured_count: remanufacturedCount,
+      oem_count: oemCount,
+      no_match_count: noMatchCount,
       environmental: {
         cartridges_saved: cartridgesSaved,
         co2_reduced_pounds: co2Reduced,
@@ -3297,10 +3348,11 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
 // the battle-tested CPP-based family matching approach
 
 /**
- * Generate PDF report and upload to storage
+ * Generate PDF reports (both customer-facing and internal) and upload to storage
+ * Returns object with both URLs
  */
-async function generateReport(savingsAnalysis: any, context: ProcessingContext): Promise<string> {
-  console.log('📄 Generating PDF report...');
+async function generateReport(savingsAnalysis: any, context: ProcessingContext): Promise<{ customerUrl: string; internalUrl: string }> {
+  console.log('📄 Generating PDF reports (customer + internal)...');
   
   try {
     // GRANULAR PROGRESS: Starting report preparation
@@ -3328,7 +3380,7 @@ async function generateReport(savingsAnalysis: any, context: ProcessingContext):
           },
           recommended_product: (item.recommendation && item.recommendation.product && item.recommendation.product.product_name) ? {
             name: item.recommendation.product.product_name,
-            sku: item.recommendation.product.ase_clover_number || 'N/A',
+            sku: item.recommendation.product.ase_clover_number || item.recommendation.product.ase_oem_number || 'N/A',
             wholesaler_sku: item.recommendation.product.wholesaler_sku || null,
             quantity_needed: item.recommendation.quantity || 0,
             unit_price: item.recommendation.product.ase_price || item.recommendation.product.partner_list_price || 0,
@@ -3344,14 +3396,19 @@ async function generateReport(savingsAnalysis: any, context: ProcessingContext):
           reason: item.recommendation?.reason || undefined,
           recommendation_type: item.recommendation?.type || undefined,
           message: item.message || undefined, // Transparency message for assumed pricing
-          price_source: item.price_source || undefined // Track pricing source
+          price_source: item.price_source || undefined, // Track pricing source
+          match_type: item.match_type || 'no_match', // Track match type for report categorization
+          ase_sku: item.ase_sku || null // ASE SKU for internal reporting
         }))
     };
 
     // Validate report data before generating PDF
     if (!reportData.summary || !reportData.breakdown) {
       console.error('❌ Invalid report data structure');
-      return '/BMO_Savings_Kit.pdf';
+      return {
+        customerUrl: '/BMO_Savings_Kit.pdf',
+        internalUrl: '/BMO_Savings_Kit.pdf'
+      };
     }
 
     // Filter out invalid items from breakdown
@@ -3361,57 +3418,92 @@ async function generateReport(savingsAnalysis: any, context: ProcessingContext):
              item.current_product.name.length > 0;
     });
 
-    console.log(`📄 Generating PDF with ${reportData.breakdown.length} items...`);
+    console.log(`📄 Generating PDFs with ${reportData.breakdown.length} items...`);
 
-    // GRANULAR PROGRESS: Generating PDF document
-    await updateProgress(context.jobId, 85, 'Generating PDF document...');
+    // Import the PDF generators
+    const { generateCustomerPDFReport } = await import('../shared/pdf-generator-customer.ts');
+    const { generateInternalPDFReport } = await import('../shared/pdf-generator-internal.ts');
+
+    // GRANULAR PROGRESS: Generating customer PDF
+    await updateProgress(context.jobId, 83, 'Generating customer PDF...');
+    const customerPdfBytes = await generateCustomerPDFReport(reportData);
     
-    // Generate PDF
-    const pdfBytes = await generatePDFReport(reportData);
+    // GRANULAR PROGRESS: Generating internal PDF
+    await updateProgress(context.jobId, 86, 'Generating internal PDF...');
+    const internalPdfBytes = await generateInternalPDFReport(reportData);
     
-    // GRANULAR PROGRESS: Uploading report
-    await updateProgress(context.jobId, 90, 'Uploading report...');
+    // GRANULAR PROGRESS: Uploading reports
+    await updateProgress(context.jobId, 90, 'Uploading reports...');
     
-    // Upload to Supabase Storage - use same folder as CSV
-    const fileName = `report.pdf`;
-    const storagePath = `${context.submissionId}/${fileName}`;
+    // Upload customer-facing PDF
+    const customerFileName = `report.pdf`;
+    const customerStoragePath = `${context.submissionId}/${customerFileName}`;
     
-    console.log('📤 Uploading PDF to:', storagePath);
+    console.log('📤 Uploading customer PDF to:', customerStoragePath);
     
-    const { data: uploadData, error: uploadError } = await supabase.storage
+    const { error: customerUploadError } = await supabase.storage
       .from('document-submissions')
-      .upload(storagePath, pdfBytes, {
+      .upload(customerStoragePath, customerPdfBytes, {
         contentType: 'application/pdf',
         cacheControl: '3600',
         upsert: true
       });
 
-    if (uploadError) {
-      console.error('❌ PDF upload error:', uploadError);
-      throw new Error(`Failed to upload PDF: ${uploadError.message}`);
+    if (customerUploadError) {
+      console.error('❌ Customer PDF upload error:', customerUploadError);
+      throw new Error(`Failed to upload customer PDF: ${customerUploadError.message}`);
     }
 
-    console.log('✅ PDF uploaded successfully:', uploadData);
-
-    // Get public URL
-    const { data: urlData } = supabase.storage
+    // Upload internal PDF
+    const internalFileName = `report-internal.pdf`;
+    const internalStoragePath = `${context.submissionId}/${internalFileName}`;
+    
+    console.log('📤 Uploading internal PDF to:', internalStoragePath);
+    
+    const { error: internalUploadError } = await supabase.storage
       .from('document-submissions')
-      .getPublicUrl(storagePath);
+      .upload(internalStoragePath, internalPdfBytes, {
+        contentType: 'application/pdf',
+        cacheControl: '3600',
+        upsert: true
+      });
 
-    console.log('✅ PDF report generated and uploaded:', urlData.publicUrl);
-    return urlData.publicUrl;
+    if (internalUploadError) {
+      console.error('❌ Internal PDF upload error:', internalUploadError);
+      throw new Error(`Failed to upload internal PDF: ${internalUploadError.message}`);
+    }
+
+    // Get public URLs
+    const { data: customerUrlData } = supabase.storage
+      .from('document-submissions')
+      .getPublicUrl(customerStoragePath);
+
+    const { data: internalUrlData } = supabase.storage
+      .from('document-submissions')
+      .getPublicUrl(internalStoragePath);
+
+    console.log('✅ Customer PDF uploaded:', customerUrlData.publicUrl);
+    console.log('✅ Internal PDF uploaded:', internalUrlData.publicUrl);
+    
+    return {
+      customerUrl: customerUrlData.publicUrl,
+      internalUrl: internalUrlData.publicUrl
+    };
     
   } catch (error) {
-    console.error('Error generating PDF:', error);
+    console.error('Error generating PDFs:', error);
     // Return placeholder if PDF generation fails (don't fail entire process)
-    return '/BMO_Savings_Kit.pdf';
+    return {
+      customerUrl: '/BMO_Savings_Kit.pdf',
+      internalUrl: '/BMO_Savings_Kit.pdf'
+    };
   }
 }
 
 /**
  * Save final report to database
  */
-async function saveFinalReport(savingsAnalysis: any, context: ProcessingContext, reportUrl: string) {
+async function saveFinalReport(savingsAnalysis: any, context: ProcessingContext, customerReportUrl: string, internalReportUrl: string) {
   // Cap numeric values to prevent overflow (DECIMAL(10,2) max is 99,999,999.99)
   const MAX_DECIMAL = 99999999.99;
   const capValue = (val: number) => Math.min(Math.max(val || 0, 0), MAX_DECIMAL);
@@ -3434,7 +3526,8 @@ async function saveFinalReport(savingsAnalysis: any, context: ProcessingContext,
       plastic_reduced_pounds: capValue(savingsAnalysis.summary.environmental.plastic_reduced_pounds),
       shipping_weight_saved_pounds: capValue(savingsAnalysis.summary.environmental.shipping_weight_saved_pounds),
       report_data: savingsAnalysis,
-      pdf_url: reportUrl,
+      pdf_url: customerReportUrl,
+      internal_pdf_url: internalReportUrl,
       customer_name: `${context.customerInfo.firstName} ${context.customerInfo.lastName}`,
       company_name: context.customerInfo.company,
       email: context.customerInfo.email
