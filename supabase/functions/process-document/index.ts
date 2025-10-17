@@ -487,7 +487,6 @@ async function processDocument(context: ProcessingContext) {
           size_category,
           color_type,
           page_yield,
-          unit_price,
           ase_price,
           partner_list_price,
           cost,
@@ -3333,7 +3332,7 @@ async function generateReport(savingsAnalysis: any, context: ProcessingContext):
             sku: item.recommendation.product.ase_clover_number || 'N/A',
             wholesaler_sku: item.recommendation.product.wholesaler_sku || null,
             quantity_needed: item.recommendation.quantity || 0,
-            unit_price: item.recommendation.product.unit_price || 0,
+            unit_price: item.recommendation.product.ase_price || item.recommendation.product.partner_list_price || 0,
             total_cost: item.recommendation.total_cost || 0,
             bulk_discount_applied: item.recommendation.type === 'bulk_pricing'
           } : undefined,
