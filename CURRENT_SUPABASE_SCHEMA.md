@@ -1,10 +1,20 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 17, 2025 (Dual Report System Implementation)
+**Last Updated:** October 19, 2025 (Email Notification System)
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
+- ✅ **EMAIL NOTIFICATION SYSTEM (Oct 19, 2025):** Automatic email alerts when document processing completes
+  - ✅ **New Edge Function:** `send-notification-email` - Resend API integration for automated notifications
+  - ✅ **Email Recipient:** areyes@gowaffl.com receives notification for every completed submission
+  - ✅ **Email Content:** User details (name, company, email, phone) + signed URLs for uploaded doc & internal report
+  - ✅ **72-Hour Signed URLs:** Secure, time-limited access to documents via Supabase Storage
+  - ✅ **Non-Blocking:** Email failures don't break processing flow - graceful error handling
+  - ✅ **Integration Point:** Triggered automatically in `saveFinalReport()` after successful report generation
+  - ✅ **Environment Variable:** `RESEND_API_KEY` added to Edge Function secrets
+  - ✅ Files: `send-notification-email/index.ts`, updated `process-document/index.ts`
+  - ✅ Result: Sales team gets instant notifications with direct access to submission documents
 - ✅ **DUAL REPORT SYSTEM (Oct 17, 2025):** Implemented separate customer-facing and internal sales reports
   - ✅ **Customer Report** - Simplified 3-page report (Executive Summary, Environmental/Benefits, Contact)
   - ✅ **Internal Report** - Detailed report with SKU summary aggregation and full line item details
@@ -489,6 +499,76 @@ Enables vector similarity search for semantic product matching using OpenAI embe
 
 ---
 
+## ⚡ Edge Functions
+
+### `process-document`
+Main document processing pipeline that orchestrates the entire savings analysis workflow.
+
+**Endpoint:** `/functions/v1/process-document`
+
+**Responsibilities:**
+- Download and parse uploaded documents (Excel, CSV)
+- Extract order items with intelligent column detection
+- Match products using multi-tier strategy (exact, fuzzy, semantic, AI)
+- Calculate savings and environmental impact
+- Generate customer and internal PDF reports
+- Save results to database
+- Trigger email notifications
+
+**Environment Variables Required:**
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `OPENAI_API_KEY`
+- `RESEND_API_KEY`
+
+### `send-notification-email`
+Sends email notifications when document processing completes.
+
+**Endpoint:** `/functions/v1/send-notification-email`
+
+**Trigger:** Automatically called by `process-document` after successful report generation
+
+**Recipient:** areyes@gowaffl.com
+
+**Email Content:**
+- Subject: "New BAV Savings Challenge Submission - [Company Name]"
+- User details: First name, last name, company, email, phone
+- Signed URLs (72-hour expiry) for:
+  - Uploaded document
+  - Internal report PDF
+
+**Environment Variables Required:**
+- `RESEND_API_KEY`
+
+**Error Handling:**
+- Email failures are logged but do not break the processing flow
+- Processing job completes successfully even if email fails
+
+**Integration:**
+```typescript
+// Called in saveFinalReport() after savings_reports insert
+await fetch(`${supabaseUrl}/functions/v1/send-notification-email`, {
+  method: 'POST',
+  body: JSON.stringify({
+    userInfo: { firstName, lastName, company, email, phone },
+    uploadedDocumentUrl: signedUrl1,
+    internalReportUrl: signedUrl2
+  })
+});
+```
+
+### `get-processing-status`
+Returns current processing status for a given job ID.
+
+**Endpoint:** `/functions/v1/get-processing-status`
+
+### `get-results`
+Retrieves final results and report URLs for a completed submission.
+
+**Endpoint:** `/functions/v1/get-results`
+
+---
+
 ## 🗄️ Storage Buckets
 
 ### `document-submissions`
@@ -535,7 +615,9 @@ Will store generated PDF reports.
    ↓
 9. PDF generated and stored
    ↓
-10. processing_jobs updated (status: completed)
+10. Email notification sent (send-notification-email Edge Function)
+   ↓
+11. processing_jobs updated (status: completed)
 ```
 
 ---

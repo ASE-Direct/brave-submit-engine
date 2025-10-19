@@ -3685,6 +3685,83 @@ async function saveFinalReport(savingsAnalysis: any, context: ProcessingContext,
     });
     throw error;
   }
+
+  // Send email notification after successful report save
+  try {
+    console.log('📧 Triggering email notification...');
+    
+    // Fetch submission data to get phone number
+    const { data: submission, error: submissionError } = await supabase
+      .from('document_submissions')
+      .select('phone, file_name')
+      .eq('id', context.submissionId)
+      .single();
+
+    if (submissionError || !submission) {
+      console.error('⚠️  Could not fetch submission for email:', submissionError);
+      // Don't throw - processing is complete, email is optional
+      return;
+    }
+
+    // Generate signed URLs for documents (72 hour expiry = 259200 seconds)
+    const { data: internalReportSignedUrl, error: internalUrlError } = await supabase.storage
+      .from('document-submissions')
+      .createSignedUrl(`${context.submissionId}/report-internal.pdf`, 259200);
+
+    if (internalUrlError || !internalReportSignedUrl) {
+      console.error('⚠️  Could not generate internal report signed URL:', internalUrlError);
+      return;
+    }
+
+    // Generate signed URL for uploaded document
+    // The uploaded file is stored with its original name in the submission folder
+    const { data: uploadedDocSignedUrl, error: uploadedUrlError } = await supabase.storage
+      .from('document-submissions')
+      .createSignedUrl(`${context.submissionId}/${submission.file_name}`, 259200);
+
+    if (uploadedUrlError || !uploadedDocSignedUrl) {
+      console.error('⚠️  Could not generate uploaded document signed URL:', uploadedUrlError);
+      return;
+    }
+
+    console.log('✅ Generated signed URLs');
+    console.log(`   Uploaded doc: ${uploadedDocSignedUrl.signedUrl.substring(0, 50)}...`);
+    console.log(`   Internal report: ${internalReportSignedUrl.signedUrl.substring(0, 50)}...`);
+
+    // Call email notification function
+    const emailResponse = await fetch(`${supabaseUrl}/functions/v1/send-notification-email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+      },
+      body: JSON.stringify({
+        userInfo: {
+          firstName: context.customerInfo.firstName,
+          lastName: context.customerInfo.lastName,
+          company: context.customerInfo.company,
+          email: context.customerInfo.email,
+          phone: submission.phone,
+        },
+        uploadedDocumentUrl: uploadedDocSignedUrl.signedUrl,
+        internalReportUrl: internalReportSignedUrl.signedUrl,
+      }),
+    });
+
+    if (!emailResponse.ok) {
+      const errorText = await emailResponse.text();
+      console.error('⚠️  Email notification failed:', errorText);
+      // Don't throw - processing is complete
+      return;
+    }
+
+    const emailResult = await emailResponse.json();
+    console.log('✅ Email notification sent successfully:', emailResult);
+
+  } catch (emailError) {
+    console.error('⚠️  Email notification error (non-fatal):', emailError);
+    // Don't throw - processing is complete, email failure shouldn't break the flow
+  }
 }
 
 /**
