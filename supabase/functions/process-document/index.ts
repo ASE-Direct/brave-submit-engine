@@ -365,23 +365,35 @@ interface MatchAttempt {
 }
 
 /**
- * Determine match type based on product SKU
- * Remanufactured products have ase_clover_number (typically end with -R)
- * OEM products only have ase_oem_number
+ * Determine match type based on product SKU and pricing availability
+ * - remanufactured: Has ase_clover_number AND ase_price AND savings > 0
+ * - oem_only: Has match (ase_oem_number or ase_clover_number) but NO ase_price (uses partner_list_price)
+ * - no_match: True no match (not in database at all)
  */
-function determineMatchType(matchedProduct: any, hasSavings: boolean): 'remanufactured' | 'oem' | 'no_match' {
-  if (!hasSavings) {
+function determineMatchType(matchedProduct: any, hasSavings: boolean, hasAsePrice: boolean): 'remanufactured' | 'oem_only' | 'no_match' {
+  // No match at all (not in database)
+  if (!matchedProduct) {
     return 'no_match';
   }
   
-  // If product has ase_clover_number, it's remanufactured
-  if (matchedProduct.ase_clover_number) {
+  // Has ase_clover_number (-R item) AND has ase_price AND has savings
+  if (matchedProduct.ase_clover_number && hasAsePrice && hasSavings) {
     return 'remanufactured';
   }
   
-  // If product only has ase_oem_number, it's OEM
-  if (matchedProduct.ase_oem_number) {
-    return 'oem';
+  // Has a match but no ase_price available (will use partner_list_price)
+  if (!hasAsePrice) {
+    return 'oem_only';
+  }
+  
+  // Has match but no savings (customer already at or below our price)
+  if (!hasSavings) {
+    return 'oem_only';
+  }
+  
+  // Has ase_oem_number only (not remanufactured)
+  if (matchedProduct.ase_oem_number && !matchedProduct.ase_clover_number) {
+    return 'oem_only';
   }
   
   return 'no_match';
@@ -546,7 +558,7 @@ async function processDocument(context: ProcessingContext) {
     // 1. No items could be matched to our catalog (wrong document type), OR
     // 2. All matched items are already at or below our prices (no opportunity)
     // In both cases, we should fail with the same message as document validation
-    if (savingsAnalysis.summary.total_cost_savings === 0) {
+    if (savingsAnalysis.summary.savings_breakdown.total_savings === 0) {
       console.log('⚠️  VALIDATION FAILED: No savings opportunities found');
       console.log(`   Matched items: ${savingsAnalysis.summary.items_with_savings}`);
       console.log(`   Total items: ${savingsAnalysis.summary.total_items}`);
@@ -938,6 +950,20 @@ async function parseDocument(content: string | ArrayBuffer, fileName: string) {
   for (let rowIdx = 0; rowIdx < rowObjects.length; rowIdx++) {
     const row = rowObjects[rowIdx];
     
+    // Skip rows that look like headers (all columns contain header-like terms)
+    const rowValues = Object.values(row);
+    const allValuesLowerCase = rowValues.map(v => String(v).toLowerCase());
+    const headerKeywords = ['sku', 'quantity', 'qty', 'price', 'cost', 'amount', 'total', 'product', 'description', 'item'];
+    const headerMatchCount = allValuesLowerCase.filter(val => 
+      headerKeywords.some(keyword => val.includes(keyword) && val.length < 30)
+    ).length;
+    
+    // If more than half the columns contain header keywords, it's probably a header row that slipped through
+    if (headerMatchCount >= Math.min(3, Math.ceil(rowValues.length / 2))) {
+      console.log(`   Row ${rowIdx + 1}: Skipping - appears to be a header row (${headerMatchCount} header-like values)`);
+      continue;
+    }
+    
     // Extract product information with intelligent column detection
     // Pass rowIdx + 1 for human-readable row numbers (1-based)
     const item = extractProductInfo(row, normalizedHeaders, rowIdx + 1, detectedCols);
@@ -946,7 +972,7 @@ async function parseDocument(content: string | ArrayBuffer, fileName: string) {
     }
   }
 
-  console.log(`✅ Parsed ${items.length} items from ${rows.length} rows`);
+  console.log(`✅ Parsed ${items.length} items from ${rows.length} data rows (after header at row ${headerIndex + 1})`);
 
   return {
     items,
@@ -1647,9 +1673,6 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
     }
   }
   
-  // Use the longest text found as the product name if we didn't have one
-  const finalProductName = longestText || 'Unknown Product';
-  
   // Primary SKU priority: OEM > Wholesaler > Staples > Depot > Generic
   const primarySku = skuFields.oem_number || 
                      skuFields.wholesaler_code || 
@@ -1657,6 +1680,9 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
                      skuFields.depot_code || 
                      skuFields.primary_sku || 
                      (skuFields.all_skus.length > 0 ? skuFields.all_skus[0] : null);
+  
+  // Use the longest text found as the product name, or use SKU if no product name available
+  const finalProductName = longestText || primarySku || 'Unknown Product';
   
   // Remove duplicates from all_skus
   skuFields.all_skus = [...new Set(skuFields.all_skus)];
@@ -2878,9 +2904,21 @@ async function saveBatchItems(items: any[], jobId: string) {
 async function calculateSavings(matchedItems: any[], jobId: string) {
   console.log('💰 Calculating savings with CPP-based optimization...');
 
-  let totalCurrentCost = 0;
-  let totalOptimizedCost = 0;
-  let totalSavings = 0;
+  // Track totals for OEM section (items without -R match or with -R but no ase_price)
+  let oemUniqueSkus = new Set<string>();
+  let oemLineItems = 0;
+  let oemTotalBasket = 0;
+  let rdTbaCount = 0;  // True no match (not in database)
+  let oemOnlyCount = 0;  // Has match but no ase_price
+  
+  // Track totals for Remanufactured section (items with -R and ase_price and savings)
+  let remanUniqueSkus = new Set<string>();
+  let remanLineItems = 0;
+  let remanCurrentCost = 0;  // What customer currently pays
+  let remanOptimizedCost = 0;  // What customer would pay with us
+  let remanSavings = 0;  // Difference
+  
+  // Environmental tracking
   let itemsWithSavings = 0;
   let itemsAnalyzed = 0;
   let itemsSkipped = 0;
@@ -2888,11 +2926,6 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
   let co2Reduced = 0;
   let plasticReduced = 0;
   let shippingWeightSaved = 0;
-  
-  // Track categorization for executive summary
-  let remanufacturedCount = 0;
-  let oemCount = 0;
-  let noMatchCount = 0;
 
   const breakdown: any[] = [];
   
@@ -2913,24 +2946,27 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
         `Analyzing savings: ${itemsProcessed}/${totalItems} products evaluated...`
       );
     }
-    // Skip if no match found, but STILL count current cost in baseline
+    // Skip if no match found - this goes to OEM section as "R&D TBA"
     if (!item.matched_product) {
-      // Include user's current spend in total, even if we can't offer savings
       const currentCost = (item.unit_price || 0) * (item.quantity || 0);
-      totalCurrentCost += currentCost;
-      totalOptimizedCost += currentCost; // No savings possible, so optimized = current
       
-      noMatchCount++; // Track for executive summary
+      // Track in OEM section
+      oemLineItems++;
+      oemTotalBasket += currentCost;
+      rdTbaCount++;  // True no match - R&D TBA
+      if (item.raw_sku) {
+        oemUniqueSkus.add(item.raw_sku);
+      }
       
       breakdown.push({
         ...item,
         savings: null,
-        recommendation: 'No match found',
+        recommendation: 'No match found - R&D TBA',
         match_type: 'no_match',
         ase_sku: null
       });
       itemsSkipped++;
-      console.log(`  ⊘ Skipped (no match, but counted $${currentCost.toFixed(2)} in baseline): ${item.raw_product_name}`);
+      console.log(`  ⊘ No match (R&D TBA): ${item.raw_product_name}`);
       continue;
     }
 
@@ -2960,24 +2996,28 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
     const hasPartnerListPrice = matchedProduct.partner_list_price && matchedProduct.partner_list_price > 0;
     const hasAsePrice_Check = matchedProduct.ase_price && matchedProduct.ase_price > 0;
     
-    // If no ASE price at all, we can't calculate any savings
+    // If no ASE price at all, categorize as OEM Only (uses partner_list_price)
     if (!hasAsePrice) {
       const currentCost = (item.unit_price || 0) * item.quantity;
-      totalCurrentCost += currentCost;
-      totalOptimizedCost += currentCost;
       
-      noMatchCount++; // Track for executive summary
+      // Track in OEM section
+      oemLineItems++;
+      oemTotalBasket += currentCost;
+      oemOnlyCount++;  // Has match but no ase_price - OEM Only
+      if (item.raw_sku) {
+        oemUniqueSkus.add(item.raw_sku);
+      }
       
       breakdown.push({
         ...item,
         matched_product: matchedProduct,
         savings: 0,
-        recommendation: 'No ASE pricing available',
-        match_type: 'no_match',
+        recommendation: 'No ASE pricing available - OEM Only',
+        match_type: 'oem_only',
         ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number || null
       });
       itemsSkipped++;
-      console.log(`  ⊘ Skipped (no ASE price): ${item.raw_product_name}`);
+      console.log(`  ⊘ OEM Only (no ASE price): ${item.raw_product_name}`);
       continue;
     }
     
@@ -3002,8 +3042,14 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
       priceSource = 'estimated_from_ase_price';
       assumedPricingMessage = 'Note: Assumed pricing based on estimated market price (30% markup from ASE price) since document didn\'t include price information.';
     } else {
-      // Last Resort: No pricing data available at all - skip this item
-      noMatchCount++; // Track for executive summary
+      // Last Resort: No pricing data available at all - categorize as OEM Only
+      
+      // Track in OEM section
+      oemLineItems++;
+      oemOnlyCount++;  // Has match but no price data - OEM Only
+      if (item.raw_sku) {
+        oemUniqueSkus.add(item.raw_sku);
+      }
       
       breakdown.push({
         ...item,
@@ -3012,18 +3058,17 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
         recommendation: 'Pricing information needed to calculate savings',
         ase_price_available: asePrice,
         message: `We found a match for this product! ASE price: $${asePrice.toFixed(2)}/unit. Upload a document with pricing to see potential savings.`,
-        match_type: 'no_match',
+        match_type: 'oem_only',
         ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number || null
       });
       itemsSkipped++;
-      console.log(`  ⊘ Skipped (no pricing data available): ${item.raw_product_name} - matched but cannot calculate savings without any price reference`);
+      console.log(`  ⊘ OEM Only (no pricing data): ${item.raw_product_name} - matched but cannot calculate savings without any price reference`);
       continue;
     }
 
     // We have enough data - analyze this item
     itemsAnalyzed++;
     const currentCost = effectiveUserPrice * item.quantity;
-    totalCurrentCost += currentCost;
 
     // Calculate CPP for matched product (using normalized ASE price) - only if we have page yield
     const matchedCPP = hasPageYield ? calculateCostPerPage(asePrice, matchedProduct.page_yield) : null;
@@ -3065,9 +3110,6 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
       const useHigherYield = higherYieldSavings > basicTotalSavings;
 
       if (useHigherYield) {
-        totalOptimizedCost += optimizedCost;
-        totalSavings += higherYieldSavings;
-
         if (higherYieldSavings > 0) {
           itemsWithSavings++;
           console.log(`     💰 Higher-Yield Savings: $${higherYieldSavings.toFixed(2)} (${((higherYieldSavings/userCurrentTotal)*100).toFixed(1)}%) - BETTER than basic $${basicTotalSavings.toFixed(2)}`);
@@ -3113,8 +3155,27 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
 
         // Track match type for executive summary
         const aseSku = higherYieldRec.recommended.ase_clover_number || higherYieldRec.recommended.ase_oem_number;
-        if (higherYieldSavings > 0) {
-          remanufacturedCount++; // Higher-yield with savings = remanufactured
+        const hasAsePriceForHigherYield = higherYieldRec.recommended.ase_price && higherYieldRec.recommended.ase_price > 0;
+        const matchType = determineMatchType(higherYieldRec.recommended, higherYieldSavings > 0, hasAsePriceForHigherYield);
+        
+        // Track in appropriate section
+        if (matchType === 'remanufactured') {
+          remanLineItems++;
+          remanCurrentCost += currentCost;
+          remanOptimizedCost += optimizedCost;
+          remanSavings += higherYieldSavings;
+          if (item.raw_sku) {
+            remanUniqueSkus.add(item.raw_sku);
+          }
+        } else {
+          oemLineItems++;
+          oemTotalBasket += currentCost;
+          if (matchType === 'oem_only') {
+            oemOnlyCount++;
+          }
+          if (item.raw_sku) {
+            oemUniqueSkus.add(item.raw_sku);
+          }
         }
         
         breakdown.push({
@@ -3132,25 +3193,12 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             type: 'larger_size'
           },
           savings: higherYieldSavings,
-          match_type: determineMatchType(higherYieldRec.recommended, higherYieldSavings > 0),
+          match_type: matchType,
           ase_sku: aseSku,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
-        
-        // Track for executive summary
-        if (higherYieldSavings > 0) {
-          const matchType = determineMatchType(higherYieldRec.recommended, true);
-          if (matchType === 'remanufactured') {
-            remanufacturedCount++;
-          } else if (matchType === 'oem') {
-            oemCount++;
-          }
-        }
       } else {
         // Basic savings is better - use ASE price for same product
-        totalOptimizedCost += basicOptimizedCost;
-        totalSavings += basicTotalSavings;
-
         if (basicTotalSavings > 0) {
           itemsWithSavings++;
           console.log(`     💰 Using Basic Price Savings: $${basicTotalSavings.toFixed(2)} (${((basicTotalSavings/currentCost)*100).toFixed(1)}%) - BETTER than higher-yield $${higherYieldSavings.toFixed(2)}`);
@@ -3196,13 +3244,27 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
           .eq('processing_job_id', jobId)
           .eq('raw_product_name', item.raw_product_name);
 
-        // Track match type for executive summary
-        if (basicTotalSavings > 0) {
-          const matchType = determineMatchType(matchedProduct, true);
-          if (matchType === 'remanufactured') {
-            remanufacturedCount++;
-          } else if (matchType === 'oem') {
-            oemCount++;
+        // Track match type and categorize
+        const hasAsePriceForBasic = matchedProduct.ase_price && matchedProduct.ase_price > 0;
+        const matchType = determineMatchType(matchedProduct, basicTotalSavings > 0, hasAsePriceForBasic);
+        
+        // Track in appropriate section
+        if (matchType === 'remanufactured') {
+          remanLineItems++;
+          remanCurrentCost += currentCost;
+          remanOptimizedCost += basicOptimizedCost;
+          remanSavings += basicTotalSavings;
+          if (item.raw_sku) {
+            remanUniqueSkus.add(item.raw_sku);
+          }
+        } else {
+          oemLineItems++;
+          oemTotalBasket += currentCost;
+          if (matchType === 'oem_only') {
+            oemOnlyCount++;
+          }
+          if (item.raw_sku) {
+            oemUniqueSkus.add(item.raw_sku);
           }
         }
         
@@ -3219,7 +3281,7 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             type: 'better_price'
           },
           savings: basicTotalSavings,
-          match_type: determineMatchType(matchedProduct, basicTotalSavings > 0),
+          match_type: matchType,
           ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
@@ -3227,8 +3289,6 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
     } else {
       // No higher-yield option - use basic price savings (if any)
       if (basicTotalSavings > 0) {
-        totalOptimizedCost += basicOptimizedCost;
-        totalSavings += basicTotalSavings;
         itemsWithSavings++;
 
         console.log(`     💰 Basic Price Savings: $${basicTotalSavings.toFixed(2)} (${((basicTotalSavings/currentCost)*100).toFixed(1)}%)`);
@@ -3273,12 +3333,28 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
           .eq('processing_job_id', jobId)
           .eq('raw_product_name', item.raw_product_name);
 
-        // Track match type for executive summary
-        const matchType = determineMatchType(matchedProduct, true);
+        // Track match type and categorize
+        const hasAsePriceNoHigherYield = matchedProduct.ase_price && matchedProduct.ase_price > 0;
+        const matchType = determineMatchType(matchedProduct, true, hasAsePriceNoHigherYield);
+        
+        // Track in appropriate section
         if (matchType === 'remanufactured') {
-          remanufacturedCount++;
-        } else if (matchType === 'oem') {
-          oemCount++;
+          remanLineItems++;
+          remanCurrentCost += currentCost;
+          remanOptimizedCost += basicOptimizedCost;
+          remanSavings += basicTotalSavings;
+          if (item.raw_sku) {
+            remanUniqueSkus.add(item.raw_sku);
+          }
+        } else {
+          oemLineItems++;
+          oemTotalBasket += currentCost;
+          if (matchType === 'oem_only') {
+            oemOnlyCount++;
+          }
+          if (item.raw_sku) {
+            oemUniqueSkus.add(item.raw_sku);
+          }
         }
         
         breakdown.push({
@@ -3294,13 +3370,20 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             type: 'better_price'
           },
           savings: basicTotalSavings,
-          match_type: determineMatchType(matchedProduct, true),
+          match_type: matchType,
           ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
       } else {
-        // No savings at all (user already paying at or below ASE price)
-        totalOptimizedCost += currentCost;
+        // No savings at all (user already paying at or below ASE price) - goes to OEM section
+        
+        // Track in OEM section
+        oemLineItems++;
+        oemTotalBasket += currentCost;
+        oemOnlyCount++;  // Already at our price - OEM Only
+        if (item.raw_sku) {
+          oemUniqueSkus.add(item.raw_sku);
+        }
         
         // Environmental impact for remanufactured/reused cartridges
         // Even without cost savings, if item has unit_price > 0, count quantity as cartridge savings
@@ -3332,9 +3415,6 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
             .eq('raw_product_name', item.raw_product_name);
         }
         
-        // Track as no_match since no savings possible
-        noMatchCount++;
-        
         breakdown.push({
           ...item,
           matched_product: matchedProduct,
@@ -3342,12 +3422,12 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
           total_price: currentCost, // Use calculated total with effective price
           price_source: priceSource,
           savings: 0,
-          recommendation: 'Already at or below ASE price',
-          match_type: 'no_match',
+          recommendation: 'Already at or below ASE price - OEM Only',
+          match_type: 'oem_only',
           ase_sku: matchedProduct.ase_clover_number || matchedProduct.ase_oem_number,
           ...(assumedPricingMessage && { message: assumedPricingMessage })
         });
-        console.log(`     ✓ Already at or below ASE price (no savings possible)`);
+        console.log(`     ✓ Already at or below ASE price (no savings possible) - OEM Only`);
       }
     }
   }
@@ -3357,22 +3437,41 @@ async function calculateSavings(matchedItems: any[], jobId: string) {
   console.log(`   Items analyzed: ${itemsAnalyzed}`);
   console.log(`   Items with savings: ${itemsWithSavings}`);
   console.log(`   Items skipped: ${itemsSkipped}`);
-  console.log(`   Remanufactured count: ${remanufacturedCount}`);
-  console.log(`   OEM like-kind exchange count: ${oemCount}`);
-  console.log(`   No match/TBD count: ${noMatchCount}`);
-  console.log(`   Total savings: $${totalSavings.toFixed(2)}`);
+  console.log(`   OEM Section - Unique SKUs: ${oemUniqueSkus.size}, Line items: ${oemLineItems}`);
+  console.log(`   OEM Section - R&D TBA count: ${rdTbaCount}, OEM Only count: ${oemOnlyCount}`);
+  console.log(`   Remanufactured Section - Unique SKUs: ${remanUniqueSkus.size}, Line items: ${remanLineItems}`);
+  console.log(`   Remanufactured savings: $${remanSavings.toFixed(2)}`);
 
   return {
     summary: {
-      total_current_cost: totalCurrentCost,
-      total_optimized_cost: totalOptimizedCost,
-      total_cost_savings: totalSavings,
-      savings_percentage: totalCurrentCost > 0 ? (totalSavings / totalCurrentCost) * 100 : 0,
+      // OEM Section (items without -R match or with -R but no ase_price)
+      oem_section: {
+        unique_items: oemUniqueSkus.size,
+        line_items: oemLineItems,
+        rd_tba_count: rdTbaCount,  // True no match
+        oem_only_count: oemOnlyCount,  // Has match but no ase_price
+        total_oem_basket: oemTotalBasket
+      },
+      
+      // Remanufactured Section (items with -R and ase_price and savings)
+      reman_section: {
+        unique_items: remanUniqueSkus.size,
+        line_items: remanLineItems,
+        total_reman_basket: remanCurrentCost  // What customer currently pays
+      },
+      
+      // Savings (ONLY from Remanufactured items)
+      savings_breakdown: {
+        oem_total_spend: remanCurrentCost,  // Current cost for Reman items only
+        bav_total_spend: remanOptimizedCost,  // Optimized cost for Reman items only
+        total_savings: remanSavings,
+        savings_percentage: remanCurrentCost > 0 ? (remanSavings / remanCurrentCost) * 100 : 0
+      },
+      
+      // Keep for backwards compatibility and internal reporting
       total_items: matchedItems.length,
       items_with_savings: itemsWithSavings,
-      remanufactured_count: remanufacturedCount,
-      oem_count: oemCount,
-      no_match_count: noMatchCount,
+      
       environmental: {
         cartridges_saved: cartridgesSaved,
         co2_reduced_pounds: co2Reduced,
@@ -3550,15 +3649,17 @@ async function saveFinalReport(savingsAnalysis: any, context: ProcessingContext,
   const MAX_DECIMAL = 99999999.99;
   const capValue = (val: number) => Math.min(Math.max(val || 0, 0), MAX_DECIMAL);
 
+  // Map new structure to database columns (for frontend compatibility)
   const { error } = await supabase
     .from('savings_reports')
     .insert({
       processing_job_id: context.jobId,
       submission_id: context.submissionId,
-      total_current_cost: capValue(savingsAnalysis.summary.total_current_cost),
-      total_optimized_cost: capValue(savingsAnalysis.summary.total_optimized_cost),
-      total_cost_savings: capValue(savingsAnalysis.summary.total_cost_savings),
-      savings_percentage: Math.min(savingsAnalysis.summary.savings_percentage || 0, 100),
+      // Map from new savings_breakdown structure to database columns
+      total_current_cost: capValue(savingsAnalysis.summary.savings_breakdown.oem_total_spend),
+      total_optimized_cost: capValue(savingsAnalysis.summary.savings_breakdown.bav_total_spend),
+      total_cost_savings: capValue(savingsAnalysis.summary.savings_breakdown.total_savings),
+      savings_percentage: Math.min(savingsAnalysis.summary.savings_breakdown.savings_percentage || 0, 100),
       total_items: savingsAnalysis.summary.total_items || 0,
       items_with_savings: savingsAnalysis.summary.items_with_savings || 0,
       // Flatten environmental data with capping
@@ -3578,9 +3679,9 @@ async function saveFinalReport(savingsAnalysis: any, context: ProcessingContext,
   if (error) {
     console.error('Error saving report:', error);
     console.error('Summary values:', {
-      current_cost: savingsAnalysis.summary.total_current_cost,
-      optimized_cost: savingsAnalysis.summary.total_optimized_cost,
-      savings: savingsAnalysis.summary.total_cost_savings
+      current_cost: savingsAnalysis.summary.savings_breakdown.oem_total_spend,
+      optimized_cost: savingsAnalysis.summary.savings_breakdown.bav_total_spend,
+      savings: savingsAnalysis.summary.savings_breakdown.total_savings
     });
     throw error;
   }

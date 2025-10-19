@@ -62,7 +62,8 @@ interface ReportData {
 }
 
 interface SkuSummary {
-  ase_sku: string;
+  input_sku: string;  // Customer's input SKU (their product identifier)
+  ase_sku: string | null;  // Our recommended ASE SKU
   total_quantity: number;
   total_current_cost: number;
   total_recommended_cost: number;
@@ -142,64 +143,41 @@ export async function generateInternalPDFReport(data: ReportData): Promise<Uint8
   
   yPos += 12;
 
-  // Calculate unique SKU count
-  const uniqueSkus = new Set(
-    data.breakdown
-      .filter(item => item.ase_sku)
-      .map(item => item.ase_sku)
-  );
-
   // OEM SKUs Section
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text(`OEM SKUs (${uniqueSkus.size} unique)`, margin, yPos);
+  doc.text(`OEM SKUs (${data.summary.oem_section.unique_items} unique)`, margin, yPos);
   
   yPos += 8;
   
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
-  doc.text(`(${data.summary.total_items}) line items`, margin + 5, yPos);
+  doc.text(`(${data.summary.oem_section.line_items}) line items`, margin + 5, yPos);
   yPos += 5;
-  doc.text(`$${data.summary.total_current_cost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} OEM Mkt. basket`, margin + 5, yPos);
+  doc.text(`(${data.summary.oem_section.rd_tba_count}) R&D TBA`, margin + 5, yPos);
+  yPos += 5;
+  doc.text(`(${data.summary.oem_section.oem_only_count}) OEM Only`, margin + 5, yPos);
+  yPos += 5;
+  doc.text(`$${data.summary.oem_section.total_oem_basket.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} OEM Mkt. basket`, margin + 5, yPos);
   
   yPos += 10;
 
-  // Remanufactured SKUs
+  // Remanufactured SKUs Section
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text(`Remanufactured SKUs (${data.summary.remanufactured_count || 0} unique)`, margin, yPos);
+  doc.text(`Remanufactured SKUs (${data.summary.reman_section.unique_items} unique)`, margin, yPos);
   
   yPos += 8;
-  
-  const remanItems = data.breakdown.filter(item => item.match_type === 'remanufactured');
-  const remanLineCount = remanItems.length;
-  const remanTotalCost = remanItems.reduce((sum, item) => sum + (item.recommended_product?.total_cost || 0), 0);
   
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
-  doc.text(`(${remanLineCount}) line items`, margin + 5, yPos);
+  doc.text(`(${data.summary.reman_section.line_items}) line items`, margin + 5, yPos);
   yPos += 5;
-  doc.text(`$${remanTotalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Reman. Mkt. basket`, margin + 5, yPos);
-  
-  yPos += 10;
-
-  // OEM Like Kind Exchange
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandNavy);
-  doc.text(`OEM Like Kind Exchange (${data.summary.oem_count || 0} unique)`, margin, yPos);
-  
-  yPos += 10;
-
-  // No Match
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandNavy);
-  doc.text(`No Match OEM (${data.summary.no_match_count || 0} items) - TBD`, margin, yPos);
+  doc.text(`$${data.summary.reman_section.total_reman_basket.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Reman. Mkt. basket`, margin + 5, yPos);
   
   yPos += 15;
 
@@ -214,15 +192,15 @@ export async function generateInternalPDFReport(data: ReportData): Promise<Uint8
   const col1X = margin + 5;
   const col2X = margin + contentWidth / 2;
 
-  // OEM Total Spend
+  // User's Current Spend
   doc.setFontSize(10);
   doc.setTextColor(darkGray);
   doc.setFont('helvetica', 'normal');
-  doc.text('OEM Total Spend', col1X, yPos);
+  doc.text("User's Current Spend", col1X, yPos);
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text(`$${data.summary.total_current_cost.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col1X, yPos + 8);
+  doc.text(`$${data.summary.savings_breakdown.oem_total_spend.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col1X, yPos + 8);
 
   // BAV Total Spend
   doc.setFontSize(10);
@@ -232,7 +210,7 @@ export async function generateInternalPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text(`$${data.summary.total_optimized_cost.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col2X, yPos + 8);
+  doc.text(`$${data.summary.savings_breakdown.bav_total_spend.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col2X, yPos + 8);
 
   yPos += 20;
 
@@ -252,12 +230,12 @@ export async function generateInternalPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(24);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandRed);
-  doc.text(`$${data.summary.total_cost_savings.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, margin + 5, yPos + 10);
+  doc.text(`$${data.summary.savings_breakdown.total_savings.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, margin + 5, yPos + 10);
   
   doc.setFontSize(12);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGreen);
-  doc.text(`${data.summary.savings_percentage.toFixed(1)}% savings`, pageWidth - margin - 40, yPos + 10);
+  doc.text(`${data.summary.savings_breakdown.savings_percentage.toFixed(1)}% savings`, pageWidth - margin - 40, yPos + 10);
 
   // ===== PAGE 2: ENVIRONMENTAL & BENEFITS =====
   doc.addPage();
@@ -417,19 +395,21 @@ export async function generateInternalPDFReport(data: ReportData): Promise<Uint8
   doc.text('SKU Summary Report', margin, yPos);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text('Aggregated by Unique ASE SKU', margin, yPos + 6);
+  doc.text('Aggregated by Customer Input SKU', margin, yPos + 6);
   
   yPos += 15;
 
-  // Aggregate data by SKU
+  // Aggregate data by CUSTOMER'S INPUT SKU (not our ASE recommendation)
   const skuMap = new Map<string, SkuSummary>();
   
   data.breakdown.forEach(item => {
-    const sku = item.ase_sku || 'TBD';
+    // Use customer's input SKU as the key for aggregation
+    const inputSku = item.current_product.sku || 'Unknown SKU';
     
-    if (!skuMap.has(sku)) {
-      skuMap.set(sku, {
-        ase_sku: sku,
+    if (!skuMap.has(inputSku)) {
+      skuMap.set(inputSku, {
+        input_sku: inputSku,
+        ase_sku: item.ase_sku || null,  // Track what we're recommending
         total_quantity: 0,
         total_current_cost: 0,
         total_recommended_cost: 0,
@@ -438,7 +418,7 @@ export async function generateInternalPDFReport(data: ReportData): Promise<Uint8
       });
     }
     
-    const summary = skuMap.get(sku)!;
+    const summary = skuMap.get(inputSku)!;
     summary.line_count++;
     summary.total_quantity += item.current_product.quantity;
     summary.total_current_cost += item.current_product.total_cost;
@@ -453,17 +433,19 @@ export async function generateInternalPDFReport(data: ReportData): Promise<Uint8
   doc.setFillColor(42, 41, 99);
   doc.rect(margin, yPos, contentWidth, 8, 'F');
   
-  doc.setFontSize(9);
+  doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(255, 255, 255);
   
-  const colSku = margin + 2;
-  const colQty = margin + 45;
-  const colCurrent = margin + 70;
-  const colBav = margin + 105;
-  const colSavings = margin + 140;
+  const colInputSku = margin + 2;
+  const colAseSku = margin + 35;
+  const colQty = margin + 68;
+  const colCurrent = margin + 88;
+  const colBav = margin + 117;
+  const colSavings = margin + 146;
   
-  doc.text('ASE SKU', colSku, yPos + 5);
+  doc.text('Input SKU', colInputSku, yPos + 5);
+  doc.text('→ ASE SKU', colAseSku, yPos + 5);
   doc.text('Qty', colQty, yPos + 5);
   doc.text('Current $', colCurrent, yPos + 5);
   doc.text('BAV $', colBav, yPos + 5);
@@ -486,10 +468,11 @@ export async function generateInternalPDFReport(data: ReportData): Promise<Uint8
       // Repeat header
       doc.setFillColor(42, 41, 99);
       doc.rect(margin, yPos, contentWidth, 8, 'F');
-      doc.setFontSize(9);
+      doc.setFontSize(8);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(255, 255, 255);
-      doc.text('ASE SKU', colSku, yPos + 5);
+      doc.text('Input SKU', colInputSku, yPos + 5);
+      doc.text('→ ASE SKU', colAseSku, yPos + 5);
       doc.text('Qty', colQty, yPos + 5);
       doc.text('Current $', colCurrent, yPos + 5);
       doc.text('BAV $', colBav, yPos + 5);
@@ -506,8 +489,11 @@ export async function generateInternalPDFReport(data: ReportData): Promise<Uint8
       doc.rect(margin, yPos, contentWidth, 7, 'F');
     }
     
-    doc.setFontSize(8);
-    doc.text(summary.ase_sku.substring(0, 20), colSku, yPos + 5);
+    doc.setFontSize(7);
+    // Show customer's input SKU
+    doc.text(summary.input_sku.substring(0, 15), colInputSku, yPos + 5);
+    // Show our recommended ASE SKU
+    doc.text(summary.ase_sku ? summary.ase_sku.substring(0, 15) : 'N/A', colAseSku, yPos + 5);
     doc.text(summary.total_quantity.toString(), colQty, yPos + 5);
     doc.text(`$${summary.total_current_cost.toFixed(2)}`, colCurrent, yPos + 5);
     doc.text(`$${summary.total_recommended_cost.toFixed(2)}`, colBav, yPos + 5);

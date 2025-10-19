@@ -130,18 +130,11 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   
   yPos += 12;
 
-  // Calculate unique SKU count
-  const uniqueSkus = new Set(
-    data.breakdown
-      .filter(item => item.ase_sku)
-      .map(item => item.ase_sku)
-  );
-
-  // Purchase Volume Section
+  // OEM SKUs Section
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text('OEM SKUs (19 unique)', margin, yPos);
+  doc.text(`OEM SKUs (${data.summary.oem_section.unique_items} unique)`, margin, yPos);
   
   yPos += 8;
   
@@ -150,9 +143,10 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setTextColor(darkGray);
   
   const oemLines = [
-    `(${data.summary.total_items}) line items`,
-    `${data.summary.total_items} total items analyzed`,
-    `$${data.summary.total_current_cost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} OEM Mkt. basket`
+    `(${data.summary.oem_section.line_items}) line items`,
+    `(${data.summary.oem_section.rd_tba_count}) R&D TBA`,
+    `(${data.summary.oem_section.oem_only_count}) OEM Only`,
+    `$${data.summary.oem_section.total_oem_basket.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} OEM Mkt. basket`
   ];
   
   oemLines.forEach(line => {
@@ -166,7 +160,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text(`Remanufactured SKUs (${data.summary.remanufactured_count || 0} unique)`, margin, yPos);
+  doc.text(`Remanufactured SKUs (${data.summary.reman_section.unique_items} unique)`, margin, yPos);
   
   yPos += 8;
   
@@ -174,51 +168,15 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
   
-  // Calculate line items and total cost for remanufactured
-  const remanItems = data.breakdown.filter(item => item.match_type === 'remanufactured');
-  const remanLineCount = remanItems.length;
-  const remanTotalCost = remanItems.reduce((sum, item) => sum + (item.recommended_product?.total_cost || 0), 0);
-  
   const remanLines = [
-    `(${remanLineCount}) line items`,
-    `${remanLineCount} total items analyzed`,
-    `$${remanTotalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Reman. Mkt. basket`
+    `(${data.summary.reman_section.line_items}) line items`,
+    `$${data.summary.reman_section.total_reman_basket.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Reman. Mkt. basket`
   ];
   
   remanLines.forEach(line => {
     doc.text(line, margin + 5, yPos);
     yPos += 5;
   });
-  
-  yPos += 8;
-
-  // OEM Like Kind Exchange Section
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandNavy);
-  doc.text(`OEM Like Kind Exchange (${data.summary.oem_count || 0} unique)`, margin, yPos);
-  
-  yPos += 5;
-  
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'italic');
-  doc.setTextColor(darkGray);
-  doc.text('(if we use the ase_oem_number) for a savings', margin + 5, yPos);
-  
-  yPos += 8;
-
-  // No Match Section
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandNavy);
-  doc.text(`No Match OEM (${data.summary.no_match_count || 0} items)`, margin, yPos);
-  
-  yPos += 5;
-  
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(darkGray);
-  doc.text('TBD (to be determined)', margin + 5, yPos);
   
   yPos += 12;
 
@@ -234,16 +192,16 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   const col1X = margin + 5;
   const col2X = margin + contentWidth / 2;
 
-  // OEM Total Spend
+  // User's Current Spend
   doc.setFontSize(10);
   doc.setTextColor(darkGray);
   doc.setFont('helvetica', 'normal');
-  doc.text('OEM Total Spend', col1X, yPos);
+  doc.text("User's Current Spend", col1X, yPos);
   
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text(`$${data.summary.total_current_cost.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col1X, yPos + 8);
+  doc.text(`$${data.summary.savings_breakdown.oem_total_spend.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col1X, yPos + 8);
 
   // BAV Total Spend
   doc.setFontSize(10);
@@ -254,7 +212,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text(`$${data.summary.total_optimized_cost.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col2X, yPos + 8);
+  doc.text(`$${data.summary.savings_breakdown.bav_total_spend.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col2X, yPos + 8);
 
   yPos += 20;
 
@@ -274,12 +232,12 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(24);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandRed);
-  doc.text(`$${data.summary.total_cost_savings.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, margin + 5, yPos + 10);
+  doc.text(`$${data.summary.savings_breakdown.total_savings.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, margin + 5, yPos + 10);
   
   doc.setFontSize(12);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGreen);
-  doc.text(`${data.summary.savings_percentage.toFixed(1)}% savings`, pageWidth - margin - 40, yPos + 10);
+  doc.text(`${data.summary.savings_breakdown.savings_percentage.toFixed(1)}% savings`, pageWidth - margin - 40, yPos + 10);
 
   // ===== PAGE 2: ENVIRONMENTAL IMPACT & KEY BENEFITS =====
   doc.addPage();
