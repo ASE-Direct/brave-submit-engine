@@ -3,6 +3,12 @@
 # Email Notification System Deployment Script
 # This script deploys the email notification system to Supabase
 
+# IMPORTANT: Before running this script:
+# 1. Copy this file to deploy-email-notification.sh (gitignored)
+# 2. Replace [YOUR_RESEND_API_KEY] with your actual Resend API key
+# 3. Ensure SUPABASE_ACCESS_TOKEN is set in your environment
+# 4. Never commit the actual deploy-email-notification.sh file
+
 set -e  # Exit on any error
 
 echo "🚀 Deploying Email Notification System"
@@ -19,18 +25,32 @@ fi
 echo "✅ Supabase CLI found"
 echo ""
 
-# Step 1: Check/Set API Key
+# Check if SUPABASE_ACCESS_TOKEN is set
+if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+    echo "❌ Error: SUPABASE_ACCESS_TOKEN environment variable is not set"
+    echo "Set it with: export SUPABASE_ACCESS_TOKEN='your_token_here'"
+    exit 1
+fi
+
+echo "✅ SUPABASE_ACCESS_TOKEN is set"
+echo ""
+
+# Step 1: Configure API Key
 echo "📝 Step 1: Configuring Resend API Key"
 echo "--------------------------------------"
 echo "Setting RESEND_API_KEY secret..."
-supabase secrets set RESEND_API_KEY=re_dfAq3DA5_562WRM5RR7U4H36dd1HcSpQU
+
+# IMPORTANT: Replace [YOUR_RESEND_API_KEY] with your actual key
+# Get your key from: https://resend.com/api-keys
+supabase secrets set RESEND_API_KEY=[YOUR_RESEND_API_KEY]
 
 if [ $? -eq 0 ]; then
     echo "✅ RESEND_API_KEY configured successfully"
 else
     echo "⚠️  Warning: Could not set RESEND_API_KEY automatically"
     echo "Please set it manually in Supabase Dashboard:"
-    echo "https://supabase.com/dashboard/project/qpiijzpslfjwikigrbol/settings/functions"
+    echo "https://supabase.com/dashboard/project/YOUR_PROJECT_REF/settings/functions"
+    exit 1
 fi
 echo ""
 
@@ -65,18 +85,18 @@ echo "🎉 Deployment Complete!"
 echo "======================="
 echo ""
 echo "✅ Email notification system is now live"
-echo "✅ Emails will be sent to: areyes@gowaffl.com"
+echo "✅ Emails will be sent to: [YOUR_NOTIFICATION_EMAIL]"
 echo "✅ Notifications trigger after successful document processing"
 echo ""
 echo "📋 Next Steps:"
 echo "1. Test the system with a document submission"
-echo "2. Check your email at areyes@gowaffl.com"
+echo "2. Check your notification email inbox"
 echo "3. Verify signed URLs work by clicking download buttons"
 echo ""
 echo "🔍 Monitor logs with:"
 echo "   supabase functions logs send-notification-email --limit 20"
 echo "   supabase functions logs process-document --limit 20"
 echo ""
-echo "📖 Full documentation: EMAIL_NOTIFICATION_IMPLEMENTATION.md"
+echo "📖 Full documentation: SECURITY_SETUP_GUIDE.md"
 echo ""
 

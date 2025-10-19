@@ -17,6 +17,23 @@ dist-ssr
 .env.local
 .env.*.local
 
+# Secrets and sensitive data - DO NOT COMMIT
+**/secrets/
+*.secret
+*.pem
+*.key
+*.p12
+*.pfx
+deploy-email-notification.sh
+deploy-secrets.sh
+.secrets
+
+# Documentation with sensitive data
+# These files contain API keys, tokens, and endpoints
+EMAIL_DEBUG_GUIDE.md
+EMAIL_DEPLOYMENT_COMPLETE.md
+EMAIL_NOTIFICATION_IMPLEMENTATION.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -13,16 +13,16 @@ All components of the email notification system have been successfully deployed 
 
 1. **✅ RESEND_API_KEY Configured**
    - Secret added to Supabase Edge Functions
-   - Key: `re_dfAq3DA5_562WRM5RR7U4H36dd1HcSpQU`
+   - Key: `[REDACTED - Your Resend API Key]`
    - Status: Active
 
 2. **✅ send-notification-email Function Deployed**
-   - Endpoint: `https://qpiijzpslfjwikigrbol.supabase.co/functions/v1/send-notification-email`
+   - Endpoint: `https://[YOUR_PROJECT_REF].supabase.co/functions/v1/send-notification-email`
    - Status: Live
    - Function: Sends email notifications via Resend API
 
 3. **✅ process-document Function Redeployed**
-   - Endpoint: `https://qpiijzpslfjwikigrbol.supabase.co/functions/v1/process-document`
+   - Endpoint: `https://[YOUR_PROJECT_REF].supabase.co/functions/v1/process-document`
    - Status: Live with email integration
    - Function: Triggers email after successful report generation
 
@@ -52,7 +52,7 @@ System generates 72-hour signed URLs:
   - Uploaded document
   - Internal report PDF
        ↓
-Email sent to: areyes@gowaffl.com
+Email sent to: [YOUR_NOTIFICATION_EMAIL]
        ↓
 Email contains:
   - User details (name, company, email, phone)
@@ -63,7 +63,7 @@ Processing completes successfully
 
 ### Email Details
 
-**Recipient:** areyes@gowaffl.com  
+**Recipient:** [YOUR_NOTIFICATION_EMAIL]  
 **Sender:** BAV Savings Challenge <onboarding@resend.dev>  
 **Subject:** New BAV Savings Challenge Submission - [Company Name]
 
@@ -82,7 +82,7 @@ Processing completes successfully
 ### Test the Email Flow
 
 1. **Submit a Test Document**
-   - Go to: https://brave-submit-engine.vercel.app (or your deployment URL)
+   - Go to: [YOUR_APP_URL]
    - Fill out the form with test data:
      - First Name: Test
      - Last Name: User
@@ -99,7 +99,7 @@ Processing completes successfully
    - Results page should display
 
 3. **Check Email**
-   - Check inbox: areyes@gowaffl.com
+   - Check inbox: [YOUR_NOTIFICATION_EMAIL]
    - Email should arrive within 1-2 minutes
    - Subject: "New BAV Savings Challenge Submission - Test Company"
 
@@ -112,11 +112,11 @@ Processing completes successfully
 5. **Check Logs (Optional)**
    ```bash
    # View email function logs
-   export SUPABASE_ACCESS_TOKEN="sbp_b70af96ee4bffd2455a32ec9f0b1f695f129d04f"
-   npx supabase functions logs send-notification-email --project-ref qpiijzpslfjwikigrbol --limit 20
+   export SUPABASE_ACCESS_TOKEN="[YOUR_SUPABASE_ACCESS_TOKEN]"
+   npx supabase functions logs send-notification-email --project-ref [YOUR_PROJECT_REF] --limit 20
    
    # View process-document logs (look for email trigger)
-   npx supabase functions logs process-document --project-ref qpiijzpslfjwikigrbol --limit 50
+   npx supabase functions logs process-document --project-ref [YOUR_PROJECT_REF] --limit 50
    ```
 
 ---
@@ -126,12 +126,12 @@ Processing completes successfully
 ### View Email Function Logs
 
 ```bash
-export SUPABASE_ACCESS_TOKEN="sbp_b70af96ee4bffd2455a32ec9f0b1f695f129d04f"
-npx supabase functions logs send-notification-email --project-ref qpiijzpslfjwikigrbol
+export SUPABASE_ACCESS_TOKEN="[YOUR_SUPABASE_ACCESS_TOKEN]"
+npx supabase functions logs send-notification-email --project-ref [YOUR_PROJECT_REF]
 ```
 
 **Look for these success indicators:**
-- ✅ "📧 Sending email notification to areyes@gowaffl.com"
+- ✅ "📧 Sending email notification to [YOUR_NOTIFICATION_EMAIL]"
 - ✅ "✅ Email sent successfully"
 - ✅ Email ID from Resend API
 
@@ -143,8 +143,8 @@ npx supabase functions logs send-notification-email --project-ref qpiijzpslfjwik
 ### View Processing Function Logs
 
 ```bash
-export SUPABASE_ACCESS_TOKEN="sbp_b70af96ee4bffd2455a32ec9f0b1f695f129d04f"
-npx supabase functions logs process-document --project-ref qpiijzpslfjwikigrbol
+export SUPABASE_ACCESS_TOKEN="[YOUR_SUPABASE_ACCESS_TOKEN]"
+npx supabase functions logs process-document --project-ref [YOUR_PROJECT_REF]
 ```
 
 **Look for these success indicators:**
@@ -170,20 +170,20 @@ npx supabase functions logs process-document --project-ref qpiijzpslfjwikigrbol
 **Step 2: Verify Processing Completed**
 ```bash
 # Check if processing finished successfully
-export SUPABASE_ACCESS_TOKEN="sbp_b70af96ee4bffd2455a32ec9f0b1f695f129d04f"
-npx supabase functions logs process-document --project-ref qpiijzpslfjwikigrbol --limit 10
+export SUPABASE_ACCESS_TOKEN="[YOUR_SUPABASE_ACCESS_TOKEN]"
+npx supabase functions logs process-document --project-ref [YOUR_PROJECT_REF] --limit 10
 ```
 Look for: "✅ Processing complete"
 
 **Step 3: Check Email Function Logs**
 ```bash
-npx supabase functions logs send-notification-email --project-ref qpiijzpslfjwikigrbol --limit 10
+npx supabase functions logs send-notification-email --project-ref [YOUR_PROJECT_REF] --limit 10
 ```
 Look for errors or "✅ Email sent successfully"
 
 **Step 4: Verify API Key**
 ```bash
-npx supabase secrets list --project-ref qpiijzpslfjwikigrbol
+npx supabase secrets list --project-ref [YOUR_PROJECT_REF]
 ```
 Should show `RESEND_API_KEY` in the list
 
@@ -192,7 +192,7 @@ Should show `RESEND_API_KEY` in the list
 **Symptoms:** Email arrives but download links return 404 or access denied
 
 **Check Storage:**
-1. Go to: https://supabase.com/dashboard/project/qpiijzpslfjwikigrbol/storage/buckets
+1. Go to: https://supabase.com/dashboard/project/[YOUR_PROJECT_REF]/storage/buckets
 2. Navigate to `document-submissions` bucket
 3. Find the submission folder (UUID)
 4. Verify files exist:
@@ -211,7 +211,7 @@ Should show `RESEND_API_KEY` in the list
 
 **Check Logs for Data Issues:**
 ```bash
-npx supabase functions logs process-document --project-ref qpiijzpslfjwikigrbol | grep -i "submission"
+npx supabase functions logs process-document --project-ref [YOUR_PROJECT_REF] | grep -i "submission"
 ```
 
 ---
@@ -223,12 +223,12 @@ npx supabase functions logs process-document --project-ref qpiijzpslfjwikigrbol 
 Currently using Resend's default sender (`onboarding@resend.dev`). To use your own domain:
 
 1. Log in to Resend: https://resend.com/domains
-2. Add domain: `gowaffl.com`
+2. Add your domain
 3. Add DNS records (provided by Resend)
 4. Verify domain
 5. Update sender in `send-notification-email/index.ts`:
    ```typescript
-   from: 'BAV Savings Challenge <notifications@gowaffl.com>',
+   from: 'BAV Savings Challenge <notifications@yourdomain.com>',
    ```
 6. Redeploy function
 
@@ -239,9 +239,9 @@ To notify multiple team members:
 **Edit:** `supabase/functions/send-notification-email/index.ts`
 
 ```typescript
-to: ['areyes@gowaffl.com', 'team@gowaffl.com'],
+to: ['email1@company.com', 'email2@company.com'],
 // or use cc/bcc
-cc: ['sales@gowaffl.com'],
+cc: ['sales@company.com'],
 ```
 
 ### 3. Send Copy to Customer
@@ -286,7 +286,7 @@ Create branded email templates:
 ### ✅ What's Live
 
 - **Email notifications:** Automatic on every successful submission
-- **Recipient:** areyes@gowaffl.com
+- **Recipient:** [YOUR_NOTIFICATION_EMAIL]
 - **Content:** User details + secure download links
 - **Timing:** Instant (sent immediately after report generation)
 - **Reliability:** Non-blocking (email failures don't break processing)
@@ -329,9 +329,9 @@ The email notification system is now fully operational. Every time a user comple
 ---
 
 **Dashboard Links:**
-- Supabase Functions: https://supabase.com/dashboard/project/qpiijzpslfjwikigrbol/functions
+- Supabase Functions: https://supabase.com/dashboard/project/[YOUR_PROJECT_REF]/functions
 - Resend Dashboard: https://resend.com/emails
-- Storage Bucket: https://supabase.com/dashboard/project/qpiijzpslfjwikigrbol/storage/buckets
+- Storage Bucket: https://supabase.com/dashboard/project/[YOUR_PROJECT_REF]/storage/buckets
 
 **Ready to receive notifications!** 📧 🎉
 

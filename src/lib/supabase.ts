@@ -1,6 +1,15 @@
 // Supabase configuration
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://qpiijzpslfjwikigrbol.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwaWlqenBzbGZqd2lraWdyYm9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk0NTMwMzIsImV4cCI6MjA3NTAyOTAzMn0.FG4PjphfoigbK8R7DQWCzg2qbQitZKGPiZ5wUtY9AL8';
+// IMPORTANT: These values MUST be set in environment variables
+// Never commit actual API keys or tokens to the repository
+// See env.example for setup instructions
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    'Missing Supabase environment variables. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file. See env.example for setup instructions.'
+  );
+}
 
 // Types for our form submission
 export interface SubmissionData {
