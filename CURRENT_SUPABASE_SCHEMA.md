@@ -7,7 +7,7 @@ This document reflects the current state of all tables, functions, and policies 
 **Recent Changes:**
 - ✅ **EMAIL NOTIFICATION SYSTEM (Oct 19, 2025):** Automatic email alerts when document processing completes
   - ✅ **New Edge Function:** `send-notification-email` - Resend API integration for automated notifications
-  - ✅ **Email Recipient:** areyes@gowaffl.com receives notification for every completed submission
+  - ✅ **Email Recipients:** areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com receive notification for every completed submission
   - ✅ **Email Content:** User details (name, company, email, phone) + signed URLs for uploaded doc & internal report
   - ✅ **72-Hour Signed URLs:** Secure, time-limited access to documents via Supabase Storage
   - ✅ **Non-Blocking:** Email failures don't break processing flow - graceful error handling
@@ -528,7 +528,7 @@ Sends email notifications when document processing completes.
 
 **Trigger:** Automatically called by `process-document` after successful report generation
 
-**Recipient:** areyes@gowaffl.com
+**Recipients:** areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com
 
 **Email Content:**
 - Subject: "New BAV Savings Challenge Submission - [Company Name]"

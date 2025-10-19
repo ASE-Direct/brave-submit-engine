@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log('📧 Sending email notification to areyes@gowaffl.com');
+    console.log('📧 Sending email notification to areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com');
     console.log(`   User: ${userInfo.firstName} ${userInfo.lastName} (${userInfo.company})`);
 
     // Prepare email HTML content
@@ -197,7 +197,7 @@ This is an automated notification from the BAV Savings Challenge system.
       },
       body: JSON.stringify({
         from: 'BAV Savings Challenge <onboarding@resend.dev>',
-        to: ['areyes@gowaffl.com'],
+        to: ['areyes@gowaffl.com', 'zjones@gowaffl.com', 'rwright@gowaffl.com'],
         subject: `New BAV Savings Challenge Submission - ${userInfo.company}`,
         html: emailHtml,
         text: emailText,
