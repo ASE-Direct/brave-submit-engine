@@ -3688,78 +3688,134 @@ async function saveFinalReport(savingsAnalysis: any, context: ProcessingContext,
 
   // Send email notification after successful report save
   try {
-    console.log('📧 Triggering email notification...');
+    console.log('📧 ========================================');
+    console.log('📧 STARTING EMAIL NOTIFICATION PROCESS');
+    console.log('📧 ========================================');
+    console.log(`📧 Submission ID: ${context.submissionId}`);
     
-    // Fetch submission data to get phone number
+    // Fetch submission data to get phone number and file info
+    console.log('📧 Step 1: Fetching submission data from database...');
     const { data: submission, error: submissionError } = await supabase
       .from('document_submissions')
-      .select('phone, file_name')
+      .select('phone, file_name, file_url')
       .eq('id', context.submissionId)
       .single();
 
     if (submissionError || !submission) {
-      console.error('⚠️  Could not fetch submission for email:', submissionError);
+      console.error('❌ EMAIL FAILED: Could not fetch submission for email');
+      console.error('   Error:', submissionError);
+      console.error('   Submission ID:', context.submissionId);
       // Don't throw - processing is complete, email is optional
       return;
     }
+    
+    console.log('✅ Submission data fetched successfully');
+    console.log(`   Phone: ${submission.phone}`);
+    console.log(`   File name: ${submission.file_name}`);
+    console.log(`   File URL: ${submission.file_url}`);
 
     // Generate signed URLs for documents (72 hour expiry = 259200 seconds)
+    console.log('📧 Step 2: Generating signed URL for internal report...');
+    console.log(`   Path: ${context.submissionId}/report-internal.pdf`);
+    
     const { data: internalReportSignedUrl, error: internalUrlError } = await supabase.storage
       .from('document-submissions')
       .createSignedUrl(`${context.submissionId}/report-internal.pdf`, 259200);
 
     if (internalUrlError || !internalReportSignedUrl) {
-      console.error('⚠️  Could not generate internal report signed URL:', internalUrlError);
+      console.error('❌ EMAIL FAILED: Could not generate internal report signed URL');
+      console.error('   Error:', internalUrlError);
+      console.error('   Path tried:', `${context.submissionId}/report-internal.pdf`);
       return;
     }
+    console.log('✅ Internal report signed URL generated');
 
     // Generate signed URL for uploaded document
-    // The uploaded file is stored with its original name in the submission folder
+    // Try using file_url from database first (full storage path)
+    console.log('📧 Step 3: Generating signed URL for uploaded document...');
+    
+    // Extract the storage path from file_url if it exists
+    let uploadedDocPath = '';
+    if (submission.file_url) {
+      // file_url might be a full URL like: https://.../storage/v1/object/public/document-submissions/{path}
+      // Or it might already be just the path
+      const urlParts = submission.file_url.split('/document-submissions/');
+      uploadedDocPath = urlParts.length > 1 ? urlParts[1] : submission.file_url;
+      console.log(`   Using file_url path: ${uploadedDocPath}`);
+    } else {
+      // Fallback: assume file is in submission folder with original filename
+      uploadedDocPath = `${context.submissionId}/${submission.file_name}`;
+      console.log(`   Using fallback path: ${uploadedDocPath}`);
+    }
+    
     const { data: uploadedDocSignedUrl, error: uploadedUrlError } = await supabase.storage
       .from('document-submissions')
-      .createSignedUrl(`${context.submissionId}/${submission.file_name}`, 259200);
+      .createSignedUrl(uploadedDocPath, 259200);
 
     if (uploadedUrlError || !uploadedDocSignedUrl) {
-      console.error('⚠️  Could not generate uploaded document signed URL:', uploadedUrlError);
+      console.error('❌ EMAIL FAILED: Could not generate uploaded document signed URL');
+      console.error('   Error:', uploadedUrlError);
+      console.error('   Path tried:', uploadedDocPath);
+      console.error('   File URL from DB:', submission.file_url);
+      console.error('   File name from DB:', submission.file_name);
       return;
     }
-
-    console.log('✅ Generated signed URLs');
-    console.log(`   Uploaded doc: ${uploadedDocSignedUrl.signedUrl.substring(0, 50)}...`);
-    console.log(`   Internal report: ${internalReportSignedUrl.signedUrl.substring(0, 50)}...`);
+    console.log('✅ Uploaded document signed URL generated');
+    
+    console.log('📧 Both signed URLs generated successfully:');
+    console.log(`   Uploaded doc: ${uploadedDocSignedUrl.signedUrl.substring(0, 80)}...`);
+    console.log(`   Internal report: ${internalReportSignedUrl.signedUrl.substring(0, 80)}...`);
 
     // Call email notification function
+    console.log('📧 Step 4: Calling send-notification-email function...');
+    console.log(`   Endpoint: ${supabaseUrl}/functions/v1/send-notification-email`);
+    console.log(`   User: ${context.customerInfo.firstName} ${context.customerInfo.lastName} (${context.customerInfo.company})`);
+    
+    const emailPayload = {
+      userInfo: {
+        firstName: context.customerInfo.firstName,
+        lastName: context.customerInfo.lastName,
+        company: context.customerInfo.company,
+        email: context.customerInfo.email,
+        phone: submission.phone,
+      },
+      uploadedDocumentUrl: uploadedDocSignedUrl.signedUrl,
+      internalReportUrl: internalReportSignedUrl.signedUrl,
+    };
+    
+    console.log('📧 Email payload prepared:', JSON.stringify(emailPayload, null, 2));
+    
     const emailResponse = await fetch(`${supabaseUrl}/functions/v1/send-notification-email`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${supabaseServiceKey}`,
       },
-      body: JSON.stringify({
-        userInfo: {
-          firstName: context.customerInfo.firstName,
-          lastName: context.customerInfo.lastName,
-          company: context.customerInfo.company,
-          email: context.customerInfo.email,
-          phone: submission.phone,
-        },
-        uploadedDocumentUrl: uploadedDocSignedUrl.signedUrl,
-        internalReportUrl: internalReportSignedUrl.signedUrl,
-      }),
+      body: JSON.stringify(emailPayload),
     });
+
+    console.log(`📧 Email function response status: ${emailResponse.status} ${emailResponse.statusText}`);
 
     if (!emailResponse.ok) {
       const errorText = await emailResponse.text();
-      console.error('⚠️  Email notification failed:', errorText);
+      console.error('❌ EMAIL FAILED: Email notification API returned error');
+      console.error('   Status:', emailResponse.status);
+      console.error('   Response:', errorText);
       // Don't throw - processing is complete
       return;
     }
 
     const emailResult = await emailResponse.json();
-    console.log('✅ Email notification sent successfully:', emailResult);
+    console.log('🎉 EMAIL SUCCESS: Email notification sent successfully!');
+    console.log('   Email ID:', emailResult.emailId);
+    console.log('   Response:', JSON.stringify(emailResult, null, 2));
+    console.log('📧 ========================================');
 
   } catch (emailError) {
-    console.error('⚠️  Email notification error (non-fatal):', emailError);
+    console.error('❌ EMAIL EXCEPTION: Email notification error (non-fatal)');
+    console.error('   Error:', emailError);
+    console.error('   Stack:', emailError instanceof Error ? emailError.stack : 'No stack trace');
+    console.log('📧 ========================================');
     // Don't throw - processing is complete, email failure shouldn't break the flow
   }
 }
