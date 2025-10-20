@@ -194,7 +194,7 @@ This is an automated notification from the BAV Savings Challenge system.
 
     // Send email via Resend API
     const emailPayload = {
-      from: 'BAV Savings Challenge <onboarding@resend.dev>',
+      from: 'BAV Savings Challenge <noreply@bavsavingschallenge.com>',
       to: recipients,
       subject: `New BAV Savings Challenge Submission - ${userInfo.company}`,
       html: emailHtml,
