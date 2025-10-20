@@ -5,14 +5,16 @@
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
-- ✅ **PRODUCTION EMAIL SYSTEM (Oct 19, 2025 - Latest):** Upgraded to production mode with verified domain
+- ✅ **PRODUCTION EMAIL SYSTEM (Oct 19, 2025 - Latest):** Upgraded to production mode with verified domain + expanded recipient list
   - ✅ **Domain Verified:** bavsavingschallenge.com - enables production mode without recipient restrictions
   - ✅ **From Address:** Changed from `onboarding@resend.dev` to `noreply@bavsavingschallenge.com`
-  - ✅ **Recipients:** All 3 team members now receive emails - areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com
+  - ✅ **Recipients (7 total):** All team members now receive emails:
+    - Waffl: areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com
+    - ASE Direct: jud@asedirect.com, bo@asedirect.com, sgibson@asedirect.com, bnaron@asedirect.com
   - ✅ **Button Text:** Updated to "Download User's Document" (was "Download Uploaded Document")
   - ✅ **Enhanced Logging:** Added detailed payload logging for debugging
   - ✅ **Updated File:** `send-notification-email/index.ts` - production configuration
-  - ✅ Result: All three sales team members receive instant notifications without sandbox restrictions
+  - ✅ Result: All seven team members across both organizations receive instant notifications without sandbox restrictions
 - ✅ **EMAIL NOTIFICATION SYSTEM (Oct 19, 2025):** Automatic email alerts when document processing completes
   - ✅ **New Edge Function:** `send-notification-email` - Resend API integration for automated notifications
   - ✅ **Email Recipients:** areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com receive notification for every completed submission

@@ -26,10 +26,15 @@ from: 'BAV Savings Challenge <onboarding@resend.dev>'
 from: 'BAV Savings Challenge <noreply@bavsavingschallenge.com>'
 ```
 
-### 3. Updated Button Text
+### 3. Expanded Recipient List
+Now sending to **7 recipients** across both teams:
+- **Waffl Team:** areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com
+- **ASE Direct Team:** jud@asedirect.com, bo@asedirect.com, sgibson@asedirect.com, bnaron@asedirect.com
+
+### 4. Updated Button Text
 - Changed "Download Uploaded Document" → "Download User's Document"
 
-### 4. Enhanced Logging
+### 5. Enhanced Logging
 - Added detailed logging to see exactly what's sent to Resend
 - Makes future debugging much easier
 
@@ -37,7 +42,7 @@ from: 'BAV Savings Challenge <noreply@bavsavingschallenge.com>'
 
 ✅ **Edge function deployed** with production configuration  
 ✅ **Domain verified** in Resend  
-✅ **All 3 recipients configured**  
+✅ **All 7 recipients configured** (3 Waffl + 4 ASE Direct)  
 ✅ **Production mode active**
 
 ## 🧪 Test Now!
@@ -45,14 +50,18 @@ from: 'BAV Savings Challenge <noreply@bavsavingschallenge.com>'
 ### How to Test
 1. **Submit a test document** through the BAV Savings Challenge
 2. **Wait for processing** to complete (usually 1-2 minutes)
-3. **Check ALL 3 inboxes:**
+3. **Check ALL 7 inboxes:**
    - ✉️ areyes@gowaffl.com
    - ✉️ zjones@gowaffl.com
    - ✉️ rwright@gowaffl.com
+   - ✉️ jud@asedirect.com
+   - ✉️ bo@asedirect.com
+   - ✉️ sgibson@asedirect.com
+   - ✉️ bnaron@asedirect.com
 
 ### What to Look For
 
-✅ **All 3 recipients receive the email** (same email, same time)  
+✅ **All 7 recipients receive the email** (same email, same time)  
 ✅ **From:** BAV Savings Challenge <noreply@bavsavingschallenge.com>  
 ✅ **Subject:** New BAV Savings Challenge Submission - [Company Name]  
 ✅ **Button says:** "Download User's Document"  
@@ -69,10 +78,10 @@ from: 'BAV Savings Challenge <noreply@bavsavingschallenge.com>'
 ### Supabase Edge Function Logs
 Should show:
 ```
-📧 Sending email notification to 3 recipients:
-   Recipients: areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com
+📧 Sending email notification to 7 recipients:
+   Recipients: areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com, jud@asedirect.com, bo@asedirect.com, sgibson@asedirect.com, bnaron@asedirect.com
 📤 Sending to Resend API with payload:
-   to: ["areyes@gowaffl.com","zjones@gowaffl.com","rwright@gowaffl.com"]
+   to: ["areyes@gowaffl.com","zjones@gowaffl.com","rwright@gowaffl.com","jud@asedirect.com","bo@asedirect.com","sgibson@asedirect.com","bnaron@asedirect.com"]
    from: BAV Savings Challenge <noreply@bavsavingschallenge.com>
 ✅ Email sent successfully
 ```
@@ -82,14 +91,14 @@ Should show:
 ```json
 {
   "from": "BAV Savings Challenge <noreply@bavsavingschallenge.com>",
-  "to": ["areyes@gowaffl.com", "zjones@gowaffl.com", "rwright@gowaffl.com"],
+  "to": ["areyes@gowaffl.com", "zjones@gowaffl.com", "rwright@gowaffl.com", "jud@asedirect.com", "bo@asedirect.com", "sgibson@asedirect.com", "bnaron@asedirect.com"],
   "status": "delivered"
 }
 ```
 
 ## 🎉 Expected Result
 
-**ALL 3 TEAM MEMBERS** should receive identical emails with:
+**ALL 7 TEAM MEMBERS** (3 Waffl + 4 ASE Direct) should receive identical emails with:
 - Customer information
 - Link to user's uploaded document (72-hour expiry)
 - Link to internal report PDF (72-hour expiry)
@@ -102,7 +111,7 @@ Should show:
 |-------------|--------|-------|
 | Sender address | onboarding@resend.dev | noreply@bavsavingschallenge.com |
 | Domain status | Sandbox mode | Production mode ✅ |
-| Recipients | Only verified addresses | All 3 addresses ✅ |
+| Recipients | Only 1 (verified only) | All 7 addresses (3 Waffl + 4 ASE) ✅ |
 | Button text | "Download Uploaded Document" | "Download User's Document" ✅ |
 | Logging | Basic | Enhanced debugging ✅ |
 

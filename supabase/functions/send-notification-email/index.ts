@@ -43,9 +43,17 @@ Deno.serve(async (req) => {
     }
 
     // Define recipients
-    const recipients = ['areyes@gowaffl.com', 'zjones@gowaffl.com', 'rwright@gowaffl.com'];
+    const recipients = [
+      'areyes@gowaffl.com',
+      'zjones@gowaffl.com',
+      'rwright@gowaffl.com',
+      'jud@asedirect.com',
+      'bo@asedirect.com',
+      'sgibson@asedirect.com',
+      'bnaron@asedirect.com'
+    ];
     
-    console.log('📧 Sending email notification to 3 recipients:');
+    console.log(`📧 Sending email notification to ${recipients.length} recipients:`);
     console.log(`   Recipients: ${recipients.join(', ')}`);
     console.log(`   User: ${userInfo.firstName} ${userInfo.lastName} (${userInfo.company})`);
 
