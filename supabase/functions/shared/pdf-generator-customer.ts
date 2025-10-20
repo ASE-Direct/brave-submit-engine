@@ -1,14 +1,17 @@
 /**
  * Customer-Facing PDF Report Generator
  * 
- * Generates simplified 3-page PDF reports for customers
+ * Generates simplified 4-page PDF reports for customers
  * - Page 1: Executive Summary with SKU breakdown
  * - Page 2: Environmental Impact & Key Benefits
- * - Page 3: Contact/CTA
+ * - Page 3: W9 Form
+ * - Page 4: Contact/CTA
  */
 
 import { jsPDF } from 'npm:jspdf@2.5.2';
+import { PDFDocument } from 'npm:pdf-lib@1.17.1';
 import { BAV_LOGO_BASE64 } from './logoData.ts';
+import { W9_PDF_BASE64 } from './w9Data.ts';
 
 interface ReportData {
   customer: {
@@ -243,137 +246,112 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.addPage();
   yPos = 20;
 
-  // Environmental Impact Box
-  const envBoxHeight = 52;
-  
+  // Page Title
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandNavy);
+  doc.text('Your Impact', margin, yPos);
+  yPos += 12;
+
+  // Environmental Impact Section - Vertical Stacked Layout
   doc.setFillColor(240, 253, 244);
   doc.setDrawColor(34, 197, 94);
-  doc.setLineWidth(0.5);
+  doc.setLineWidth(0.8);
+  const envBoxHeight = 95;
   doc.roundedRect(margin, yPos, contentWidth, envBoxHeight, 3, 3, 'FD');
   
-  yPos += 8;
+  yPos += 10;
   
-  doc.setFontSize(14);
+  doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(21, 128, 61);
-  doc.text('Environmental Impact', margin + 5, yPos);
+  doc.text('🌍 Environmental Impact', margin + 5, yPos);
+  
+  yPos += 12;
+
+  // Environmental metrics - Vertical stacked layout with better spacing
+  const metricLeftCol = margin + 10;
+  const metricSpacing = 15;
+
+  // Metric 1: Cartridges Saved
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(darkGray);
+  doc.text('Cartridges Saved from Landfill', metricLeftCol, yPos);
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(34, 197, 94);
+  doc.text(`${data.summary.environmental.cartridges_saved}`, metricLeftCol, yPos + 8);
+  yPos += metricSpacing;
+
+  // Metric 2: CO2 Reduced
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(darkGray);
+  doc.text('CO₂ Emissions Reduced', metricLeftCol, yPos);
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(34, 197, 94);
+  doc.text(`${data.summary.environmental.co2_reduced_pounds.toFixed(0)} lbs`, metricLeftCol, yPos + 8);
+  yPos += metricSpacing;
+
+  // Metric 3: Trees Equivalent
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(darkGray);
+  doc.text('Trees Saved Equivalent', metricLeftCol, yPos);
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(34, 197, 94);
+  doc.text(`${data.summary.environmental.trees_saved.toFixed(2)} trees`, metricLeftCol, yPos + 8);
+  yPos += metricSpacing;
+
+  // Metric 4: Plastic Reduced
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(darkGray);
+  doc.text('Plastic Waste Reduced', metricLeftCol, yPos);
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(34, 197, 94);
+  doc.text(`${data.summary.environmental.plastic_reduced_pounds.toFixed(0)} lbs`, metricLeftCol, yPos + 8);
+  yPos += metricSpacing;
+
+  // Metric 5: Shipping Weight Saved
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(darkGray);
+  doc.text('Shipping Weight Saved', metricLeftCol, yPos);
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(34, 197, 94);
+  doc.text(`${(data.summary.environmental.shipping_weight_saved_pounds || 0).toFixed(1)} lbs`, metricLeftCol, yPos + 8);
+  
+  yPos += 22;
+
+  // Key Quality Benefits Section - Enhanced and larger
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(42, 41, 99);
+  doc.setLineWidth(0.8);
+  const benefitsBoxHeight = 85;
+  doc.roundedRect(margin, yPos, contentWidth, benefitsBoxHeight, 3, 3, 'D');
+  
+  yPos += 10;
+  
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(brandNavy);
+  doc.text('✓ Key Quality Benefits', margin + 5, yPos);
   
   yPos += 10;
 
-  // Environmental metrics - Row 1: 3 columns
-  const envCol1 = margin + 5;
-  const envCol2 = margin + contentWidth / 3;
-  const envCol3 = margin + (contentWidth * 2 / 3);
-  const envColWidth = contentWidth / 3;
-
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(darkGray);
-  
-  // Cartridges Saved
-  const cartridgesSavedLabel = 'Cartridges Saved';
-  const cartridgesSavedLabelWidth = doc.getTextWidth(cartridgesSavedLabel);
-  doc.text(cartridgesSavedLabel, envCol1 + (envColWidth - cartridgesSavedLabelWidth) / 2, yPos);
-  
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(34, 197, 94);
-  const cartridgesSavedValue = `${data.summary.environmental.cartridges_saved}`;
-  const cartridgesSavedValueWidth = doc.getTextWidth(cartridgesSavedValue);
-  doc.text(cartridgesSavedValue, envCol1 + (envColWidth - cartridgesSavedValueWidth) / 2, yPos + 7);
-  
-  // CO2 Reduced
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(darkGray);
-  const co2Label = 'CO₂ Reduced (lbs)';
-  const co2LabelWidth = doc.getTextWidth(co2Label);
-  doc.text(co2Label, envCol2 + (envColWidth - co2LabelWidth) / 2, yPos);
-  
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(34, 197, 94);
-  const co2Value = `${data.summary.environmental.co2_reduced_pounds.toFixed(0)}`;
-  const co2ValueWidth = doc.getTextWidth(co2Value);
-  doc.text(co2Value, envCol2 + (envColWidth - co2ValueWidth) / 2, yPos + 7);
-  
-  // Trees Saved
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(darkGray);
-  const treesLabel = 'Trees Equivalent';
-  const treesLabelWidth = doc.getTextWidth(treesLabel);
-  doc.text(treesLabel, envCol3 + (envColWidth - treesLabelWidth) / 2, yPos);
-  
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(34, 197, 94);
-  const treesValue = `${data.summary.environmental.trees_saved.toFixed(2)}`;
-  const treesValueWidth = doc.getTextWidth(treesValue);
-  doc.text(treesValue, envCol3 + (envColWidth - treesValueWidth) / 2, yPos + 7);
-
-  yPos += 18;
-
-  // Environmental metrics - Row 2: 2 columns
-  const envCol1Row2 = margin + 5;
-  const envCol2Row2 = margin + contentWidth / 2;
-  const envColWidthRow2 = contentWidth / 2;
-
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(darkGray);
-  
-  // Plastic Reduced
-  const plasticLabel = 'Plastic Reduced (lbs)';
-  const plasticLabelWidth = doc.getTextWidth(plasticLabel);
-  doc.text(plasticLabel, envCol1Row2 + (envColWidthRow2 - plasticLabelWidth) / 2, yPos);
-  
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(34, 197, 94);
-  const plasticValue = `${data.summary.environmental.plastic_reduced_pounds.toFixed(0)}`;
-  const plasticValueWidth = doc.getTextWidth(plasticValue);
-  doc.text(plasticValue, envCol1Row2 + (envColWidthRow2 - plasticValueWidth) / 2, yPos + 7);
-  
-  // Shipping Weight Saved
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(darkGray);
-  const shippingLabel = 'Shipping Weight Saved (lbs)';
-  const shippingLabelWidth = doc.getTextWidth(shippingLabel);
-  doc.text(shippingLabel, envCol2Row2 + (envColWidthRow2 - shippingLabelWidth) / 2, yPos);
-  
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(34, 197, 94);
-  const shippingValue = `${(data.summary.environmental.shipping_weight_saved_pounds || 0).toFixed(1)}`;
-  const shippingValueWidth = doc.getTextWidth(shippingValue);
-  doc.text(shippingValue, envCol2Row2 + (envColWidthRow2 - shippingValueWidth) / 2, yPos + 7);
-
-  yPos += 20;
-
-  // Key Quality Benefits Section
-  doc.setFillColor(255, 255, 255);
-  doc.setDrawColor(42, 41, 99);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(margin, yPos, contentWidth, 56, 3, 3, 'D');
-  
-  yPos += 7;
-  
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(brandNavy);
-  doc.text('Key Quality Benefits', margin + 5, yPos);
-  
-  yPos += 7;
-
-  // Benefits list
-  doc.setFontSize(8.5);
+  // Benefits list - Enhanced with better spacing and larger text
+  doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
   
   const benefits = [
-    '2-year Warranty Guarantee',
+    '2-Year Warranty Guarantee',
     'STMC & ISO Certified - Performance, yield, and reliability tested',
     'Independent Lab Tested - Validated by Buyer\'s Lab for quality',
     'Green Choice - Reduces landfill waste by 50%',
@@ -384,13 +362,19 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   ];
   
   benefits.forEach((benefit) => {
-    doc.text('•', margin + 5, yPos);
-    const benefitLines = doc.splitTextToSize(benefit, contentWidth - 15);
+    // Checkmark icon instead of bullet
+    doc.setTextColor(34, 197, 94);
+    doc.setFont('helvetica', 'bold');
+    doc.text('✓', margin + 8, yPos);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(darkGray);
+    const benefitLines = doc.splitTextToSize(benefit, contentWidth - 20);
     benefitLines.forEach((line: string, idx: number) => {
-      doc.text(line, margin + 9, yPos);
-      if (idx < benefitLines.length - 1) yPos += 3.5;
+      doc.text(line, margin + 14, yPos);
+      if (idx < benefitLines.length - 1) yPos += 4.5;
     });
-    yPos += 4;
+    yPos += 5.5;
   });
 
   // ===== PAGE 3: CALL TO ACTION =====
@@ -436,7 +420,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   yPos += 7;
   doc.text('Web: www.asedirect.com', pageWidth / 2, yPos, { align: 'center' });
 
-  // Footer on all pages
+  // Footer on all pages (temporary - will be updated after merging with W9)
   const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
@@ -444,7 +428,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
     doc.setTextColor(darkGray);
     doc.setFont('helvetica', 'normal');
     doc.text(
-      `BAV Savings Challenge Report | Page ${i} of ${totalPages}`,
+      `BAV Savings Challenge Report | Page ${i}`,
       pageWidth / 2,
       pageHeight - 10,
       { align: 'center' }
@@ -458,6 +442,38 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
     );
   }
 
-  return doc.output('arraybuffer') as Uint8Array;
+  // Generate the base PDF
+  const basePdfBytes = doc.output('arraybuffer') as Uint8Array;
+
+  // Now merge with W9 PDF using pdf-lib
+  try {
+    // Load the generated PDF
+    const pdfDoc = await PDFDocument.load(basePdfBytes);
+    
+    // Decode the W9 PDF from base64
+    const w9Bytes = Uint8Array.from(atob(W9_PDF_BASE64), c => c.charCodeAt(0));
+    const w9Doc = await PDFDocument.load(w9Bytes);
+    
+    // Get all W9 pages (in case it's multi-page)
+    const w9PageCount = w9Doc.getPageCount();
+    const w9Pages = await pdfDoc.copyPages(w9Doc, Array.from({ length: w9PageCount }, (_, i) => i));
+    
+    // Insert W9 pages before the last page (which is the contact page)
+    // Current pages: 0 (Summary), 1 (Environmental), 2 (Contact)
+    // We want: 0 (Summary), 1 (Environmental), 2+ (W9 pages), last (Contact)
+    w9Pages.forEach((w9Page, index) => {
+      pdfDoc.insertPage(2 + index, w9Page);
+    });
+    
+    // Save the merged PDF
+    const mergedPdfBytes = await pdfDoc.save();
+    return new Uint8Array(mergedPdfBytes);
+    
+  } catch (error) {
+    console.error('Failed to merge W9 PDF:', error);
+    console.error('Error details:', error);
+    // If merging fails, return the original PDF without W9
+    return basePdfBytes;
+  }
 }
 
