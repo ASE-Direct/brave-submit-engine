@@ -265,7 +265,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(21, 128, 61);
-  doc.text('🌍 Environmental Impact', margin + 5, yPos);
+  doc.text('Environmental Impact', margin + 5, yPos);
   
   yPos += 12;
 
@@ -278,21 +278,21 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(darkGray);
   doc.text('Cartridges Saved from Landfill', metricLeftCol, yPos);
-  doc.setFontSize(22);
+  doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94);
-  doc.text(`${data.summary.environmental.cartridges_saved}`, metricLeftCol, yPos + 8);
+  doc.text(`${data.summary.environmental.cartridges_saved}`, metricLeftCol, yPos + 7);
   yPos += metricSpacing;
 
   // Metric 2: CO2 Reduced
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(darkGray);
-  doc.text('CO₂ Emissions Reduced', metricLeftCol, yPos);
-  doc.setFontSize(22);
+  doc.text('CO2 Emissions Reduced', metricLeftCol, yPos);
+  doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94);
-  doc.text(`${data.summary.environmental.co2_reduced_pounds.toFixed(0)} lbs`, metricLeftCol, yPos + 8);
+  doc.text(`${data.summary.environmental.co2_reduced_pounds.toFixed(0)} lbs`, metricLeftCol, yPos + 7);
   yPos += metricSpacing;
 
   // Metric 3: Trees Equivalent
@@ -300,10 +300,10 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(darkGray);
   doc.text('Trees Saved Equivalent', metricLeftCol, yPos);
-  doc.setFontSize(22);
+  doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94);
-  doc.text(`${data.summary.environmental.trees_saved.toFixed(2)} trees`, metricLeftCol, yPos + 8);
+  doc.text(`${data.summary.environmental.trees_saved.toFixed(2)} trees`, metricLeftCol, yPos + 7);
   yPos += metricSpacing;
 
   // Metric 4: Plastic Reduced
@@ -311,10 +311,10 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(darkGray);
   doc.text('Plastic Waste Reduced', metricLeftCol, yPos);
-  doc.setFontSize(22);
+  doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94);
-  doc.text(`${data.summary.environmental.plastic_reduced_pounds.toFixed(0)} lbs`, metricLeftCol, yPos + 8);
+  doc.text(`${data.summary.environmental.plastic_reduced_pounds.toFixed(0)} lbs`, metricLeftCol, yPos + 7);
   yPos += metricSpacing;
 
   // Metric 5: Shipping Weight Saved
@@ -322,10 +322,10 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(darkGray);
   doc.text('Shipping Weight Saved', metricLeftCol, yPos);
-  doc.setFontSize(22);
+  doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94);
-  doc.text(`${(data.summary.environmental.shipping_weight_saved_pounds || 0).toFixed(1)} lbs`, metricLeftCol, yPos + 8);
+  doc.text(`${(data.summary.environmental.shipping_weight_saved_pounds || 0).toFixed(1)} lbs`, metricLeftCol, yPos + 7);
   
   yPos += 22;
 
@@ -341,7 +341,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text('✓ Key Quality Benefits', margin + 5, yPos);
+  doc.text('Key Quality Benefits', margin + 5, yPos);
   
   yPos += 10;
 
@@ -362,10 +362,10 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   ];
   
   benefits.forEach((benefit) => {
-    // Checkmark icon instead of bullet
+    // Regular bullet point instead of checkmark
     doc.setTextColor(34, 197, 94);
     doc.setFont('helvetica', 'bold');
-    doc.text('✓', margin + 8, yPos);
+    doc.text('•', margin + 8, yPos);
     
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(darkGray);
