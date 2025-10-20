@@ -42,7 +42,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log('📧 Sending email notification to areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com');
+    // Define recipients
+    const recipients = ['areyes@gowaffl.com', 'zjones@gowaffl.com', 'rwright@gowaffl.com'];
+    
+    console.log('📧 Sending email notification to 3 recipients:');
+    console.log(`   Recipients: ${recipients.join(', ')}`);
     console.log(`   User: ${userInfo.firstName} ${userInfo.lastName} (${userInfo.company})`);
 
     // Prepare email HTML content
@@ -147,7 +151,7 @@ Deno.serve(async (req) => {
             
             <div style="margin: 20px 0;">
               <a href="${uploadedDocumentUrl}" class="button" style="color: white;">
-                📄 Download Uploaded Document
+                📄 Download User's Document
               </a>
               <a href="${internalReportUrl}" class="button" style="color: white; background-color: #28a745;">
                 📊 Download Internal Report
@@ -179,7 +183,7 @@ Customer Details:
 - Phone: ${userInfo.phone}
 
 Documents:
-- Uploaded Document: ${uploadedDocumentUrl}
+- User's Document: ${uploadedDocumentUrl}
 - Internal Report: ${internalReportUrl}
 
 Note: These download links will expire in 72 hours.
@@ -189,19 +193,26 @@ This is an automated notification from the BAV Savings Challenge system.
     `.trim();
 
     // Send email via Resend API
+    const emailPayload = {
+      from: 'BAV Savings Challenge <onboarding@resend.dev>',
+      to: recipients,
+      subject: `New BAV Savings Challenge Submission - ${userInfo.company}`,
+      html: emailHtml,
+      text: emailText,
+    };
+    
+    console.log('📤 Sending to Resend API with payload:');
+    console.log(`   to: ${JSON.stringify(emailPayload.to)}`);
+    console.log(`   from: ${emailPayload.from}`);
+    console.log(`   subject: ${emailPayload.subject}`);
+    
     const resendResponse = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${resendApiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        from: 'BAV Savings Challenge <onboarding@resend.dev>',
-        to: ['areyes@gowaffl.com', 'zjones@gowaffl.com', 'rwright@gowaffl.com'],
-        subject: `New BAV Savings Challenge Submission - ${userInfo.company}`,
-        html: emailHtml,
-        text: emailText,
-      }),
+      body: JSON.stringify(emailPayload),
     });
 
     const resendData = await resendResponse.json();
