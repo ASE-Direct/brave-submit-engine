@@ -1,10 +1,15 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 19, 2025 (Email Notification System)
+**Last Updated:** October 19, 2025 (Email Recipients Update)
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
+- ✅ **EMAIL RECIPIENTS UPDATE (Oct 19, 2025 - Latest):** Expanded notification list to include full sales team
+  - ✅ **Updated Recipients:** Now sends to areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com (was only areyes@gowaffl.com)
+  - ✅ **Updated File:** `send-notification-email/index.ts` line 200 - recipient array expanded
+  - ✅ **Deployment:** Successfully deployed to production edge functions
+  - ✅ Result: All three sales team members receive instant notifications for every new submission
 - ✅ **EMAIL NOTIFICATION SYSTEM (Oct 19, 2025):** Automatic email alerts when document processing completes
   - ✅ **New Edge Function:** `send-notification-email` - Resend API integration for automated notifications
   - ✅ **Email Recipients:** areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com receive notification for every completed submission
