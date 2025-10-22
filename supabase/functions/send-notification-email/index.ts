@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Define recipients
+    // Define recipients - ALL 7 RECIPIENTS ACTIVE
     const recipients = [
       'areyes@gowaffl.com',
       'zjones@gowaffl.com',

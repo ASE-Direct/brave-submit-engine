@@ -1,10 +1,23 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 19, 2025 (Production Email System)
+**Last Updated:** October 22, 2025 (PDF Vision OCR Support)
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
+- ✅ **PDF PROCESSING WITH VISION OCR (Oct 22, 2025 - Latest):** Native PDF support using GPT-5-mini built-in OCR
+  - ✅ **Vision Extraction:** PDFs sent directly to GPT-5-mini for intelligent line item extraction
+  - ✅ **Zero Dependencies:** No pdf.js, tesseract, or OCR libraries needed - uses existing OpenAI client
+  - ✅ **Structured Output:** GPT-5-mini returns JSON with product names, SKUs (OEM, UPC, vendor), quantities, prices
+  - ✅ **Unified Pipeline:** Extracted PDF items flow through same matching/savings logic as CSV/Excel
+  - ✅ **Smart Detection:** Automatically identifies tables, skips headers/totals/metadata
+  - ✅ **Multi-SKU Support:** Extracts multiple identifier types simultaneously (OEM numbers, UPCs, vendor SKUs)
+  - ✅ **Latest Model:** Uses gpt-5-mini (newest OpenAI vision model with enhanced accuracy)
+  - ✅ **Production Ready:** Full error handling, logging, validation
+  - ✅ New Function: `extractItemsFromPDFWithVision()` in `process-document/index.ts`
+  - ✅ Updated Functions: `downloadFile()`, `parseDocument()` to handle PDF binary and route to vision
+  - ✅ Documentation: `PDF_VISION_OCR_IMPLEMENTATION.md`, updated `EXCEL_PROCESSING.md`
+  - ✅ Result: Users can now upload PDF quotes/invoices and get accurate savings analysis
 - ✅ **PRODUCTION EMAIL SYSTEM (Oct 19, 2025 - Latest):** Upgraded to production mode with verified domain + expanded recipient list
   - ✅ **Domain Verified:** bavsavingschallenge.com - enables production mode without recipient restrictions
   - ✅ **From Address:** Changed from `onboarding@resend.dev` to `noreply@bavsavingschallenge.com`

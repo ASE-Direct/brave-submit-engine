@@ -743,15 +743,174 @@ async function downloadFile(fileUrl: string, fileName: string): Promise<string |
     throw new Error(`Failed to download file: ${response.statusText}`);
   }
   
-  // Check if file is Excel format (binary)
+  // Check if file is Excel or PDF format (binary)
   const isExcel = fileName.toLowerCase().endsWith('.xlsx') || 
                   fileName.toLowerCase().endsWith('.xls');
+  const isPDF = fileName.toLowerCase().endsWith('.pdf');
   
-  if (isExcel) {
+  if (isExcel || isPDF) {
     return await response.arrayBuffer();
   }
   
   return await response.text();
+}
+
+/**
+ * Extract line items from PDF using OpenAI Responses API (GPT-5-mini)
+ * This is the recommended approach for PDF processing with structured outputs
+ * Returns structured data in the same format as CSV/Excel parsing
+ */
+async function extractItemsFromPDFWithVision(pdfBuffer: ArrayBuffer): Promise<any[]> {
+  console.log('📄 Extracting items from PDF using GPT-5-mini Responses API...');
+  
+  let uploadedFileId = '';
+  
+  try {
+    // Step 1: Upload PDF file to OpenAI
+    console.log('📤 Step 1: Uploading PDF to OpenAI Files API...');
+    const file = new File([pdfBuffer], 'document.pdf', { type: 'application/pdf' });
+    
+    const uploadedFile = await openai.files.create({
+      file: file,
+      purpose: 'user_data' // Recommended purpose for Responses API inputs
+    });
+    
+    uploadedFileId = uploadedFile.id;
+    console.log(`✅ File uploaded with ID: ${uploadedFileId}`);
+    
+    // Step 2: Call Responses API with file + structured output
+    console.log('🤖 Step 2: Calling GPT-5-mini Responses API with structured output...');
+    const response = await openai.responses.create({
+      model: 'gpt-5-mini',
+      input: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_file',
+              file_id: uploadedFileId
+            },
+            {
+              type: 'input_text',
+              text: `Analyze this PDF document (quote, invoice, or purchase order) and extract ALL line items into the JSON schema.
+
+CRITICAL INSTRUCTIONS:
+1. Look for table structures with columns like: Item Description, Part Number, SKU, OEM, Quantity, Qty, Price, Unit Price, Amount, Total
+2. Extract ONLY actual product line items - skip headers, totals, subtotals, shipping, taxes, addresses, and metadata
+3. If a product has multiple identifiers (e.g., Item number "457052" AND [VPC] "5855876" AND [UPC] "734646710855"), extract all into their respective fields
+4. Parse quantities and prices as numbers (remove currency symbols like $, commas)
+5. Use null for missing/unknown values - do NOT invent data
+6. Return empty items array if no line items are found in the document
+
+Example extraction pattern:
+"TONER BLACK LEXMARK [VPC] 5855876 [UPC] 734646710855" with Item# 457052
+→ product_name: "TONER BLACK LEXMARK", sku: "457052", oem_number: "5855876", upc: "734646710855"`
+            }
+          ]
+        }
+      ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'LineItemsExtraction',
+          schema: {
+            type: 'object',
+            properties: {
+              items: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    product_name: { 
+                      type: 'string',
+                      description: 'Full product description or name'
+                    },
+                    sku: { 
+                      type: 'string',
+                      description: 'Primary SKU, part number, or item number. Use empty string if not available.'
+                    },
+                    oem_number: { 
+                      type: 'string',
+                      description: 'OEM/manufacturer part number (often in [VPC] brackets). Use empty string if not available.'
+                    },
+                    upc: { 
+                      type: 'string',
+                      description: 'UPC barcode (often in [UPC] brackets). Use empty string if not available.'
+                    },
+                    vendor_sku: { 
+                      type: 'string',
+                      description: 'Vendor-specific SKU if different from primary. Use empty string if not available.'
+                    },
+                    quantity: { 
+                      type: 'number',
+                      description: 'Quantity ordered'
+                    },
+                    unit_price: { 
+                      type: 'number',
+                      description: 'Unit price per item. Use 0 if not available.'
+                    },
+                    total_price: { 
+                      type: 'number',
+                      description: 'Total line amount. Use 0 if not available.'
+                    }
+                  },
+                  required: ['product_name', 'sku', 'oem_number', 'upc', 'vendor_sku', 'quantity', 'unit_price', 'total_price'],
+                  additionalProperties: false
+                }
+              }
+            },
+            required: ['items'],
+            additionalProperties: false
+          }
+        }
+      }
+    } as any);
+    
+    // Step 4: Parse the structured response
+    console.log('📥 Step 3: Parsing structured response...');
+    const outputText = response.output_text || '';
+    
+    if (!outputText) {
+      throw new Error('Model returned empty output_text');
+    }
+    
+    console.log('📋 Raw response (first 500 chars):', outputText.substring(0, 500));
+    
+    let result: { items: any[] };
+    try {
+      result = JSON.parse(outputText);
+    } catch (parseError) {
+      throw new Error(`Failed to parse JSON output: ${parseError instanceof Error ? parseError.message : 'Unknown error'}\nRaw output: ${outputText}`);
+    }
+    
+    if (!result.items || !Array.isArray(result.items)) {
+      throw new Error(`Invalid response structure - expected {items: [...]} but got: ${JSON.stringify(result)}`);
+    }
+    
+    console.log(`✅ GPT-5-mini extracted ${result.items.length} items from PDF`);
+    
+    if (result.items.length > 0) {
+      console.log('📋 First extracted item sample:', JSON.stringify(result.items[0], null, 2));
+    }
+    
+    return result.items;
+    
+  } catch (error) {
+    console.error('❌ Error extracting items from PDF with Responses API:', error);
+    throw new Error(`Failed to extract items from PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  } finally {
+    // Step 5: Always cleanup - delete the uploaded file
+    if (uploadedFileId) {
+      try {
+        console.log('🧹 Cleaning up: Deleting uploaded file...');
+        await openai.files.del(uploadedFileId);
+        console.log(`✅ File ${uploadedFileId} deleted successfully`);
+      } catch (cleanupError) {
+        console.warn(`⚠️ Cleanup warning: Failed to delete file ${uploadedFileId}:`, cleanupError);
+        // Non-critical, don't fail the whole request
+      }
+    }
+  }
 }
 
 /**
@@ -763,6 +922,63 @@ async function parseDocument(content: string | ArrayBuffer, fileName: string) {
   // Detect file type
   const isExcel = fileName.toLowerCase().endsWith('.xlsx') || 
                   fileName.toLowerCase().endsWith('.xls');
+  const isPDF = fileName.toLowerCase().endsWith('.pdf');
+  
+  // HANDLE PDF FILES WITH GPT-5-mini VISION
+  if (isPDF && content instanceof ArrayBuffer) {
+    console.log('📄 PDF detected - using GPT-5-mini vision extraction...');
+    
+    const extractedItems = await extractItemsFromPDFWithVision(content);
+    
+    // Map vision-extracted items to our standard format
+    const items = extractedItems.map((visionItem: any, index: number) => {
+      // Collect all SKU fields into a comprehensive SKU array (filter out empty strings)
+      const allSkus: string[] = [];
+      if (visionItem.sku && visionItem.sku.trim()) allSkus.push(visionItem.sku.trim());
+      if (visionItem.oem_number && visionItem.oem_number.trim()) allSkus.push(visionItem.oem_number.trim());
+      if (visionItem.upc && visionItem.upc.trim()) allSkus.push(visionItem.upc.trim());
+      if (visionItem.vendor_sku && visionItem.vendor_sku.trim()) allSkus.push(visionItem.vendor_sku.trim());
+      
+      // Primary SKU priority: OEM > vendor_sku > sku > upc (skip empty strings)
+      const primarySku = (visionItem.oem_number && visionItem.oem_number.trim()) || 
+                         (visionItem.vendor_sku && visionItem.vendor_sku.trim()) || 
+                         (visionItem.sku && visionItem.sku.trim()) || 
+                         (visionItem.upc && visionItem.upc.trim()) || 
+                         null;
+      
+      return {
+        rowNumber: index + 1,
+        raw_product_name: visionItem.product_name || 'Unknown Product',
+        raw_description: visionItem.product_name || '',
+        raw_sku: primarySku,
+        sku_fields: {
+          primary_sku: (visionItem.sku && visionItem.sku.trim()) || undefined,
+          oem_number: (visionItem.oem_number && visionItem.oem_number.trim()) || undefined,
+          wholesaler_code: (visionItem.vendor_sku && visionItem.vendor_sku.trim()) || undefined,
+          upc: (visionItem.upc && visionItem.upc.trim()) || undefined,
+          all_skus: allSkus
+        },
+        quantity: visionItem.quantity || 1,
+        unit_price: visionItem.unit_price || 0,
+        total_price: visionItem.total_price || (visionItem.unit_price * visionItem.quantity) || 0,
+        extraction_quality: {
+          has_sku: allSkus.length > 0,
+          has_price: visionItem.unit_price != null,
+          has_quantity: visionItem.quantity != null,
+          has_description: visionItem.product_name != null && visionItem.product_name.length > 0,
+          confidence: allSkus.length > 0 && visionItem.quantity ? 0.9 : 0.7
+        }
+      };
+    });
+    
+    console.log(`✅ Mapped ${items.length} PDF items to standard format`);
+    
+    return {
+      items,
+      totalItems: items.length,
+      headers: ['Product Name', 'SKU/OEM', 'Quantity', 'Unit Price', 'Total'] // Synthetic headers for PDF
+    };
+  }
   
   let rows: any[][] = [];
   let headers: string[] = [];

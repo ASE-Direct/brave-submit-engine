@@ -43,7 +43,7 @@ Both Excel and CSV files now:
 | Excel (Modern) | `.xlsx` | ✅ Fully Supported |
 | Excel (Legacy) | `.xls` | ✅ Fully Supported |
 | CSV | `.csv` | ✅ Fully Supported |
-| PDF | `.pdf` | ⚠️ Accepted but not implemented yet |
+| PDF | `.pdf` | ✅ **NEW: Fully Supported with GPT-5-mini Vision OCR** |
 
 ## How It Works
 
@@ -130,6 +130,36 @@ If an Excel file has multiple SKU columns (e.g., "Staples SKU" AND "OEM Number")
 ### Dependencies Added:
 - `npm:xlsx@0.18.5` - SheetJS library for Excel parsing
 
+## PDF Processing (NEW - Implemented!)
+
+### GPT-5-mini Vision OCR
+The system now fully supports PDF files using OpenAI's GPT-5-mini vision capabilities:
+
+1. **Automatic Detection**: PDFs are detected and downloaded as binary
+2. **Vision-Based Extraction**: GPT-5-mini reads the PDF with built-in OCR
+3. **Structured Output**: Extracts line items in JSON format with:
+   - Product names/descriptions
+   - Multiple SKU types (OEM, UPC, vendor SKU)
+   - Quantities
+   - Unit prices and totals
+4. **Intelligent Parsing**: Automatically identifies tables and line items, skipping headers/totals
+5. **Unified Pipeline**: Extracted items flow through the same matching/savings pipeline as CSV/Excel
+
+### PDF Processing Flow:
+
+1. **File Upload** → User uploads .pdf file (quote, invoice, order form, etc.)
+2. **Download** → Function downloads PDF as binary ArrayBuffer
+3. **Vision Extraction** → GPT-4o-mini analyzes PDF and extracts all line items
+4. **Structure Mapping** → Maps extracted data to standard format
+5. **Match & Calculate** → Same processing as CSV/Excel files
+
+### Advantages over Traditional OCR:
+- **No preprocessing needed**: Works with any PDF (scanned, digital, complex layouts)
+- **Intelligent extraction**: Understands context and table structures
+- **Multi-column SKU support**: Extracts OEM numbers, UPCs, vendor SKUs simultaneously
+- **High accuracy**: GPT-5-mini's vision model is trained on diverse documents
+- **No additional libraries**: No need for pdf.js, tesseract.js, or other OCR tools
+
 ## Next Steps (Optional Enhancements)
 
 ### Future Improvements:
@@ -138,9 +168,9 @@ If an Excel file has multiple SKU columns (e.g., "Staples SKU" AND "OEM Number")
    - Currently processes only first sheet
    - Could allow user to select sheet or process all sheets
 
-2. **PDF Processing**
-   - Extract tables from PDF files
-   - Use OCR for scanned documents
+2. **Multi-page PDF Optimization**
+   - Current implementation sends entire PDF to vision model
+   - Could implement page-by-page processing for very large PDFs (50+ pages)
 
 3. **Excel Export**
    - Generate results as Excel file
