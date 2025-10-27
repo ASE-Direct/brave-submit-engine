@@ -1620,12 +1620,14 @@ function extractProductInfo(row: Record<string, string>, headers: string[], rowN
     const lower = h.toLowerCase().trim();
     // Exact matches (case-insensitive)
     if (lower === 'qty' || lower === 'quantity' || lower === 'qty sold' || lower === 'quantity sold') return true;
+    // Include "order quantity", "order qty", and similar patterns
+    if (/\b(order|ordered)\s*(qty|quantity)/i.test(h)) return true;
     // Include "QTY in Sell UOM" type columns
     if (/qty.*in.*sell|quantity.*in.*sell/i.test(h)) return true;
     // Exclude standalone UOM columns
     if (/^(sell\s*uom|uom)$/i.test(lower)) return false;
-    // Pattern matches
-    return /^qty|^quantity|qty\s*sold|quantity\s*sold/i.test(lower);
+    // Pattern matches - match headers that start with or contain qty/quantity
+    return /^qty|^quantity|qty\s*sold|quantity\s*sold|\bqty\b|\bquantity\b/i.test(lower);
   });
   
   // Try to find price column by explicit name

@@ -30,6 +30,24 @@ interface ReportData {
     remanufactured_count: number;
     oem_count: number;
     no_match_count: number;
+    oem_section: {
+      unique_items: number;
+      line_items: number;
+      rd_tba_count: number;
+      oem_only_count: number;
+      total_oem_basket: number;
+    };
+    reman_section: {
+      unique_items: number;
+      line_items: number;
+      total_reman_basket: number;
+    };
+    savings_breakdown: {
+      oem_total_spend: number;
+      bav_total_spend: number;
+      total_savings: number;
+      savings_percentage: number;
+    };
     environmental: {
       cartridges_saved: number;
       co2_reduced_pounds: number;
@@ -64,6 +82,16 @@ interface ReportData {
 /**
  * Generate customer-facing PDF report (3 pages only)
  */
+/**
+ * Helper to format currency with proper commas and decimals
+ */
+function formatCurrency(amount: number, decimals: number = 2): string {
+  return amount.toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  });
+}
+
 export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8Array> {
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -149,7 +177,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
     `(${data.summary.oem_section.line_items}) line items`,
     `(${data.summary.oem_section.rd_tba_count}) R&D TBA`,
     `(${data.summary.oem_section.oem_only_count}) OEM Only`,
-    `$${data.summary.oem_section.total_oem_basket.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} OEM Mkt. basket`
+    `$${formatCurrency(data.summary.oem_section.total_oem_basket)} OEM Mkt. basket`
   ];
   
   oemLines.forEach(line => {
@@ -173,7 +201,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   
   const remanLines = [
     `(${data.summary.reman_section.line_items}) line items`,
-    `$${data.summary.reman_section.total_reman_basket.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Reman. Mkt. basket`
+    `$${formatCurrency(data.summary.reman_section.total_reman_basket)} Reman. Mkt. basket`
   ];
   
   remanLines.forEach(line => {
@@ -204,7 +232,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text(`$${data.summary.savings_breakdown.oem_total_spend.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col1X, yPos + 8);
+  doc.text(`$${formatCurrency(data.summary.savings_breakdown.oem_total_spend, 0)}`, col1X, yPos + 8);
 
   // BAV Total Spend
   doc.setFontSize(10);
@@ -215,7 +243,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandNavy);
-  doc.text(`$${data.summary.savings_breakdown.bav_total_spend.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, col2X, yPos + 8);
+  doc.text(`$${formatCurrency(data.summary.savings_breakdown.bav_total_spend, 0)}`, col2X, yPos + 8);
 
   yPos += 20;
 
@@ -235,12 +263,12 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(24);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(brandRed);
-  doc.text(`$${data.summary.savings_breakdown.total_savings.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, margin + 5, yPos + 10);
+  doc.text(`$${formatCurrency(data.summary.savings_breakdown.total_savings, 0)}`, margin + 5, yPos + 10);
   
   doc.setFontSize(12);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGreen);
-  doc.text(`${data.summary.savings_breakdown.savings_percentage.toFixed(1)}% savings`, pageWidth - margin - 40, yPos + 10);
+  doc.text(`${formatCurrency(data.summary.savings_breakdown.savings_percentage, 1)}% savings`, pageWidth - margin - 40, yPos + 10);
 
   // ===== PAGE 2: ENVIRONMENTAL IMPACT & KEY BENEFITS =====
   doc.addPage();
@@ -292,7 +320,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94);
-  doc.text(`${data.summary.environmental.co2_reduced_pounds.toFixed(0)} lbs`, metricLeftCol, yPos + 7);
+  doc.text(`${formatCurrency(data.summary.environmental.co2_reduced_pounds, 0)} lbs`, metricLeftCol, yPos + 7);
   yPos += metricSpacing;
 
   // Metric 3: Trees Equivalent
@@ -303,7 +331,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94);
-  doc.text(`${data.summary.environmental.trees_saved.toFixed(2)} trees`, metricLeftCol, yPos + 7);
+  doc.text(`${formatCurrency(data.summary.environmental.trees_saved)} trees`, metricLeftCol, yPos + 7);
   yPos += metricSpacing;
 
   // Metric 4: Plastic Reduced
@@ -314,7 +342,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94);
-  doc.text(`${data.summary.environmental.plastic_reduced_pounds.toFixed(0)} lbs`, metricLeftCol, yPos + 7);
+  doc.text(`${formatCurrency(data.summary.environmental.plastic_reduced_pounds, 0)} lbs`, metricLeftCol, yPos + 7);
   yPos += metricSpacing;
 
   // Metric 5: Shipping Weight Saved
@@ -325,7 +353,7 @@ export async function generateCustomerPDFReport(data: ReportData): Promise<Uint8
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(34, 197, 94);
-  doc.text(`${(data.summary.environmental.shipping_weight_saved_pounds || 0).toFixed(1)} lbs`, metricLeftCol, yPos + 7);
+  doc.text(`${formatCurrency(data.summary.environmental.shipping_weight_saved_pounds || 0, 1)} lbs`, metricLeftCol, yPos + 7);
   
   yPos += 22;
 

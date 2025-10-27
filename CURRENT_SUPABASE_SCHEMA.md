@@ -1,11 +1,21 @@
 # Current Supabase Database Schema
 
-**Last Updated:** October 22, 2025 (PDF Vision OCR Support)
+**Last Updated:** October 22, 2025 (Quantity Column Detection Fix)
 
 This document reflects the current state of all tables, functions, and policies in the Supabase database.
 
 **Recent Changes:**
-- ✅ **PDF PROCESSING WITH VISION OCR (Oct 22, 2025 - Latest):** Native PDF support using GPT-5-mini built-in OCR
+- ✅ **QUANTITY COLUMN DETECTION FIX (Oct 22, 2025 - Latest):** Fixed Excel extraction to properly detect "Order Quantity" columns
+  - ✅ **Issue:** System was only extracting quantity=1 for all items despite spreadsheets showing varying quantities (1,549, 318, 301, etc.)
+  - ✅ **Root Cause:** Regex pattern `/^qty|^quantity/` only matched columns starting with "qty" or "quantity", missing "Order Quantity"
+  - ✅ **Fix Applied:** Enhanced detection to match:
+    - "Order Quantity", "Order Qty", "Ordered Quantity" patterns
+    - Headers containing qty/quantity anywhere (not just at start)
+    - Maintains exclusions for UOM columns
+  - ✅ **Updated Function:** `extractProductInfo()` in `process-document/index.ts` (lines 1618-1631)
+  - ✅ **Testing:** Verified with spreadsheet `1761153279978_CHS.TEST.SG10.22.25.xlsx` showing proper quantity extraction needed
+  - ✅ Result: System now correctly extracts actual order quantities from all column naming variations
+- ✅ **PDF PROCESSING WITH VISION OCR (Oct 22, 2025):** Native PDF support using GPT-5-mini built-in OCR
   - ✅ **Vision Extraction:** PDFs sent directly to GPT-5-mini for intelligent line item extraction
   - ✅ **Zero Dependencies:** No pdf.js, tesseract, or OCR libraries needed - uses existing OpenAI client
   - ✅ **Structured Output:** GPT-5-mini returns JSON with product names, SKUs (OEM, UPC, vendor), quantities, prices
@@ -21,16 +31,16 @@ This document reflects the current state of all tables, functions, and policies 
 - ✅ **PRODUCTION EMAIL SYSTEM (Oct 19, 2025 - Latest):** Upgraded to production mode with verified domain + expanded recipient list
   - ✅ **Domain Verified:** bavsavingschallenge.com - enables production mode without recipient restrictions
   - ✅ **From Address:** Changed from `onboarding@resend.dev` to `noreply@bavsavingschallenge.com`
-  - ✅ **Recipients (7 total):** All team members now receive emails:
-    - Waffl: areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com
-    - ASE Direct: jud@asedirect.com, bo@asedirect.com, sgibson@asedirect.com, bnaron@asedirect.com
+  - ⚠️ **TEST MODE (Oct 25, 2025):** Only 1 recipient receives emails:
+    - Test: areyes@gowaffl.com (ONLY)
+    - Production recipients (commented out): zjones@, rwright@, jud@, bo@, sgibson@, bnaron@
   - ✅ **Button Text:** Updated to "Download User's Document" (was "Download Uploaded Document")
   - ✅ **Enhanced Logging:** Added detailed payload logging for debugging
   - ✅ **Updated File:** `send-notification-email/index.ts` - production configuration
   - ✅ Result: All seven team members across both organizations receive instant notifications without sandbox restrictions
 - ✅ **EMAIL NOTIFICATION SYSTEM (Oct 19, 2025):** Automatic email alerts when document processing completes
   - ✅ **New Edge Function:** `send-notification-email` - Resend API integration for automated notifications
-  - ✅ **Email Recipients:** areyes@gowaffl.com, zjones@gowaffl.com, rwright@gowaffl.com receive notification for every completed submission
+  - ⚠️ **Email Recipients (TEST MODE):** areyes@gowaffl.com ONLY receives notifications (production recipients disabled for testing)
   - ✅ **Email Content:** User details (name, company, email, phone) + signed URLs for uploaded doc & internal report
   - ✅ **72-Hour Signed URLs:** Secure, time-limited access to documents via Supabase Storage
   - ✅ **Non-Blocking:** Email failures don't break processing flow - graceful error handling

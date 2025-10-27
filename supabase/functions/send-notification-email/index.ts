@@ -42,18 +42,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Define recipients - ALL 7 RECIPIENTS ACTIVE
+    // ⚠️ TEST MODE ACTIVE - ONLY areyes@gowaffl.com RECEIVES EMAILS
+    // Production recipients (commented out):
+    // 'zjones@gowaffl.com',
+    // 'rwright@gowaffl.com',
+    // 'jud@asedirect.com',
+    // 'bo@asedirect.com',
+    // 'sgibson@asedirect.com',
+    // 'bnaron@asedirect.com'
     const recipients = [
-      'areyes@gowaffl.com',
-      'zjones@gowaffl.com',
-      'rwright@gowaffl.com',
-      'jud@asedirect.com',
-      'bo@asedirect.com',
-      'sgibson@asedirect.com',
-      'bnaron@asedirect.com'
+      'areyes@gowaffl.com'  // TEST MODE: Only this email receives notifications
     ];
     
-    console.log(`📧 Sending email notification to ${recipients.length} recipients:`);
+    console.log(`⚠️  TEST MODE: Sending email notification to ${recipients.length} recipient (areyes@gowaffl.com only):`);
     console.log(`   Recipients: ${recipients.join(', ')}`);
     console.log(`   User: ${userInfo.firstName} ${userInfo.lastName} (${userInfo.company})`);
 
